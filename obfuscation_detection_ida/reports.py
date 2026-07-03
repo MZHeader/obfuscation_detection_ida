@@ -89,60 +89,30 @@ def section_finding(section, entropy):
 
 
 def _functions():
-    # iter_functions() already caches — just materialize the generator.
     return list(iter_functions())
 
 
-# Hard cap on how many findings any single heuristic can produce. Even after
-# the score gates below, a very large binary can leave dozens of "top decile"
-# hits per heuristic; we truncate to the highest-scoring N so the results
-# view stays reviewable.
 MAX_FINDINGS_PER_HEURISTIC = 30
 
-# Minimum absolute score a function needs to keep after the top-10% ranking.
-# Real obfuscation samples score much higher than "top decile of an ordinary
-# binary", so these gates are deliberately strict. Edit the constants in this
-# file to loosen them if you're studying a codebase where obfuscation is
-# subtle. Also see MIN_BLOCKS_* which require the function to be big enough
-# for the score to be meaningful in the first place.
-MIN_STATE_MACHINE_SCORE = 0.75           # dispatcher dominates >=75% of CFG
-MIN_STATE_MACHINE_BLOCKS = 20            # need a real CFG, not a 4-block stub
-MIN_CYCLOMATIC_COMPLEXITY = 50           # ordinary code rarely reaches 50+
+MIN_STATE_MACHINE_SCORE = 0.75
+MIN_STATE_MACHINE_BLOCKS = 20
+MIN_CYCLOMATIC_COMPLEXITY = 50
 MIN_COMPLEX_FUNCTION_BLOCKS = 20
-MIN_AVG_BLOCK_INSTRUCTIONS = 40          # crypto / unrolled code territory
-MIN_LARGE_BLOCK_BLOCKS = 1               # a single 800-instruction block is
-                                         # exactly what this heuristic should
-                                         # catch (fully-unrolled MD5, AES,
-                                         # SHA, custom crypto). Excluding
-                                         # them was a real miss.
-MIN_UNCOMMON_SEQ_SCORE = 0.85            # 0.75 still catches hex parsers,
-                                         # whitespace tokenizers, string trim;
-                                         # 0.85+ isolates crypto/hash-shaped code
-MIN_CALLERS = 30                         # library-tier helpers, not "used twice"
-MOST_CALLED_REQUIRE_XOR_LOOP = True      # only tag popular helpers if they also
-                                         # look like decoders; otherwise "many
-                                         # callers" catches every utility
-MIN_LOOPS = 5                            # 1-4 loops is routine
-MIN_IRREDUCIBLE_LOOPS = 1                # already guarded; kept for symmetry
-MIN_DUPLICATE_SUBGRAPHS = 4              # 2-3 duplicates is call-site clustering,
-                                         # not obfuscation
-MIN_MBA_INSTRUCTIONS = 5                 # a single mixed op is any normal xor/shift
-MIN_LEAF_INSTRUCTIONS = 20               # tiny leaves are helpers, not outlined code
-MIN_LEAF_CALLERS = 2                     # a leaf with a single caller is just an
-                                         # un-inlined helper the compiler happened
-                                         # to keep out-of-line. Real "outlined
-                                         # stubs / trampolines" are shared across
-                                         # multiple call sites — that's what makes
-                                         # them worth outlining.
-MAX_LEAF_CALLERS = 5                     # a leaf called 10+ times is a plain utility
-                                         # (memcpy-like helper), not an outlined stub
-                                         # or trampoline
-MIN_ENTRY_INSTRUCTIONS = 5               # ditto for uncalled entry-like fragments
-MIN_FRAGMENTATION_RATIO = 8              # ratio of blocks to cyclomatic complexity
-                                         # (normal code is ~1-3; block splitting
-                                         # pushes it to double digits)
-MIN_FRAGMENTATION_BLOCKS = 50            # skip small functions where the ratio
-                                         # isn't statistically meaningful
+MIN_AVG_BLOCK_INSTRUCTIONS = 40
+MIN_LARGE_BLOCK_BLOCKS = 1
+MIN_UNCOMMON_SEQ_SCORE = 0.85
+MIN_CALLERS = 30
+MOST_CALLED_REQUIRE_XOR_LOOP = True
+MIN_LOOPS = 5
+MIN_IRREDUCIBLE_LOOPS = 1
+MIN_DUPLICATE_SUBGRAPHS = 4
+MIN_MBA_INSTRUCTIONS = 5
+MIN_LEAF_INSTRUCTIONS = 20
+MIN_LEAF_CALLERS = 2
+MAX_LEAF_CALLERS = 5
+MIN_ENTRY_INSTRUCTIONS = 5
+MIN_FRAGMENTATION_RATIO = 8
+MIN_FRAGMENTATION_BLOCKS = 50
 
 
 def _cap(findings, key=None):
@@ -255,9 +225,6 @@ def find_instruction_overlapping_reports():
 def find_uncommon_instruction_sequence_reports():
     use_llil, db = determine_ngram_database(ida_arch_name())
     if use_llil:
-        # The IDA port has no LLIL; without a matching assembly database this
-        # heuristic would flag every function. Skip cleanly on unsupported
-        # architectures instead of emitting noise.
         print(
             "[obfdet] Uncommon Instruction Sequence: no 3-gram database for "
             "architecture '%s'; skipping." % ida_arch_name()
@@ -303,16 +270,7 @@ def find_most_called_function_reports():
 
 
 def find_xor_decryption_loop_reports():
-    # First pass: collect (site, xor-constant) pairs across every function
-    # so we can filter out constants that appear in many functions.
-    #
-    # Real string / code decryption almost always uses a per-function key.
-    # Hash polynomials (FNV, CRC32, jenkins) get INLINED into dozens of
-    # callers, producing the same constant over and over. Dropping the
-    # cross-function-shared constants kills the biggest FP class on large
-    # C++ binaries without hurting real decryption stubs or SHA/HMAC
-    # constants (which appear once or twice at most).
-    per_func_sites = []  # list of (f, [(site_ea, const_value_or_None), ...])
+    per_func_sites = []
     const_freq = {}
     for f in _functions():
         sites = xor_decryption_loop_sites(f)
@@ -329,9 +287,6 @@ def find_xor_decryption_loop_reports():
                 seen_consts_here.add(cv)
         per_func_sites.append((f, annotated))
 
-    # A constant appearing in 3+ distinct functions is almost certainly a
-    # shared polynomial / hash-init value, not a per-function decryption
-    # key. Real SHA/HMAC constants appear at most once or twice.
     SHARED_CONST_THRESHOLD = 3
     shared_consts = {
         c for c, n in const_freq.items() if n >= SHARED_CONST_THRESHOLD
@@ -450,11 +405,6 @@ def _has_any_data_ref(function):
 
 
 def find_entry_function_reports():
-    # On large clean C++ binaries IDA's caller analysis leaves hundreds of
-    # legitimate static/private functions orphaned; rank by instruction
-    # count and cap so a "real shellcode / dead-code fragment" (typically
-    # the biggest orphan) surfaces first instead of being buried under 150
-    # tiny helpers.
     scored = []
     for f in _functions():
         if len(callers_of(f)) != 0:
@@ -486,9 +436,6 @@ def find_leaf_function_reports():
         if _has_any_data_ref(f):
             continue
         scored.append((insns, f))
-    # Cap to the top MAX_FINDINGS_PER_HEURISTIC by instruction count. A
-    # 200-instruction leaf is more likely a real outlined helper than one
-    # of a thousand 20-insn getters in a large C++ codebase.
     scored.sort(key=lambda x: -x[0])
     return [
         function_finding(f, TAG_LEAF_FUNCTION, TAG_DESC_LEAF_FUNCTION)
@@ -497,10 +444,6 @@ def find_leaf_function_reports():
 
 
 def find_recursive_function_reports():
-    # Rank by instruction count so we surface the *interesting* recursives
-    # on huge C++ codebases (game engines, LLVM). Every template-traversal
-    # helper is technically self-recursive; without a cap the report is
-    # unreadable on binaries with hundreds of thousands of functions.
     scored = []
     for f in _functions():
         if f.start not in callees_of(f):
@@ -540,10 +483,6 @@ def find_rc4_prga_reports():
         if not sites:
             continue
         scored.append((len(sites), f, sites))
-    # Rank by anchor-site count; functions with more byte-XOR sites are the
-    # more RC4-shaped candidates. On large clean binaries this caps a
-    # heuristic that would otherwise fire on every byte-XOR crypto primitive
-    # (AES round helpers, XOR128, HMAC, memcmp-style constant-time ops).
     scored.sort(key=lambda x: -x[0])
     return [
         function_finding(f, TAG_RC4_PRGA, TAG_DESC_RC4_PRGA, anchor_addresses=sites)

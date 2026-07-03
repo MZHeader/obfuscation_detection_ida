@@ -27,29 +27,13 @@ from .loop_analysis import (
 from .ngrams import determine_ngram_database, ida_arch_name
 
 
-# ---------------------------------------------------------------------------
-# Function iteration helpers
-# ---------------------------------------------------------------------------
-
-
 _FUNCTION_GRAPH_CACHE = {}
 _FUNCTION_LIST_CACHE = None
 
-# IDA function-flag bits we always want to exclude from scoring: recognised
-# library code (FLIRT / IDA Teams / user-marked), and thunks / wrappers.
 _SKIP_FUNC_FLAGS = ida_funcs.FUNC_LIB | ida_funcs.FUNC_THUNK
 
-# Only score functions whose name is IDA's auto-generated placeholder. In a
-# reverse-engineering session the placeholders are the ones you haven't
-# analysed yet; anything IDA has resolved from PDB / FLIRT / mangling, or
-# that you renamed by hand, is by definition either library code or already
-# understood. Set to False if you want to score everything (e.g. for a
-# non-malware binary where symbols are user code).
 SKIP_NAMED_FUNCTIONS = False
 
-# Prefixes IDA uses for its automatic per-address names. Anything starting
-# with one of these is treated as unnamed / unanalysed. Used as a fallback
-# when the ida_bytes flag-based check isn't available.
 _AUTO_NAME_PREFIXES = (
     "sub_",
     "loc_",
@@ -58,7 +42,7 @@ _AUTO_NAME_PREFIXES = (
     "j_",
     "def_",
     "unknown_libname_",
-    "start_",  # IDA's auto-numbered secondary entry points
+    "start_",
 )
 
 
@@ -169,7 +153,6 @@ def callers_of(function):
         if xref.iscode and xref.type in (ida_xref.fl_CN, ida_xref.fl_CF, ida_xref.fl_JN, ida_xref.fl_JF):
             f = ida_funcs.get_func(xref.frm)
             if f is None:
-                # orphan caller (code outside any function). Still a caller.
                 result.add(xref.frm)
             elif f.start_ea != function.start:
                 result.add(f.start_ea)
@@ -198,7 +181,6 @@ def callees_of(function):
                     if callee is not None:
                         result.add(callee.start_ea)
                     else:
-                        # call into orphan code (packer stub, shellcode, etc.)
                         result.add(xref.to)
                 elif xref.type in _JUMP_XREF_TYPES:
                     callee = ida_funcs.get_func(xref.to)
@@ -211,23 +193,8 @@ def callees_of(function):
     return result
 
 
-# ---------------------------------------------------------------------------
-# State machine
-# ---------------------------------------------------------------------------
-
-
 _MIN_DISPATCHER_SUCCESSORS = 3
 
-# Signature thresholds for the compiler-emitted binary-tree-cascade shape
-# of CFF (Emotet's state dispatchers, where a switch got compiled as
-# `if(r>K) ... else if(r>L) ...` chains). Real CFF has three properties:
-#   * many natural loops (one back-edge per state case)
-#   * many back-edges into a SINGLE dispatcher head (state cases all
-#     funnel back)
-#   * many duplicated subgraphs (cloned state-transition handlers)
-# The duplicate-subgraph requirement is what separates CFF cascades from
-# ordinary parser loops (`while (tok = next()) switch (tok) { ... }`),
-# which also have many back-edges to one head but distinct case bodies.
 _CFF_CASCADE_MIN_LOOPS = 10
 _CFF_CASCADE_MIN_BACKEDGES = 5
 _CFF_CASCADE_MIN_DUPLICATES = 10
@@ -253,11 +220,6 @@ def calc_state_machine_score(function):
     if total == 0:
         return 0.0
     score = 0.0
-    # Pre-compute the set of blocks that participate in a natural loop.
-    # A wide-fanout dispatcher may not have back-edges pointing directly
-    # at itself (the compiler often emits `while(1) { switch(state) {} }`
-    # where the back-edge targets the LOOP HEAD, not the dispatch block
-    # nested inside it). PlugX's VM interpreter has exactly that shape.
     loop_blocks = set()
     for block in compute_blocks_in_natural_loops(function):
         loop_blocks.add(block)
@@ -273,21 +235,12 @@ def calc_state_machine_score(function):
     if score > 0:
         return score
 
-    # Cascade fallback: no wide-fanout dispatcher found. Check for the CFF
-    # cascade signature — dominator with many back-edges from within its
-    # dominated set (state cases all funnelling back to one head), many
-    # natural loops overall, AND many duplicated subgraphs. Without the
-    # duplicate-subgraph check we would also fire on ordinary parsers
-    # (`while (tok = next()) switch (tok) { ... }`) which structurally
-    # look like cascades but have distinct case bodies.
     n_loops = compute_number_of_natural_loops(function)
     if n_loops < _CFF_CASCADE_MIN_LOOPS:
         return 0.0
     if count_context_signature_duplicates(function) < _CFF_CASCADE_MIN_DUPLICATES:
         return 0.0
     for block in function.basic_blocks:
-        # Skip trivial single-successor prolog / entry blocks; the real
-        # cascade head has at least a 2-way test.
         if len(block.successors) < 2:
             continue
         dominated = function.dominated_by(block)
@@ -299,11 +252,6 @@ def calc_state_machine_score(function):
             continue
         score = max(score, len(dominated) / total)
     return score
-
-
-# ---------------------------------------------------------------------------
-# Cyclomatic complexity / average block size
-# ---------------------------------------------------------------------------
 
 
 def calc_cyclomatic_complexity(function):
@@ -343,11 +291,6 @@ def calc_fragmentation_ratio(function):
     return num_blocks / cc
 
 
-# ---------------------------------------------------------------------------
-# XOR decryption loops (assembly-level detection)
-# ---------------------------------------------------------------------------
-
-
 _DTYPE_SIZES = {
     ida_ua.dt_byte: 1,
     ida_ua.dt_word: 2,
@@ -380,8 +323,6 @@ def _xor_instruction_info(ea):
         op = insn.ops[i]
         if op.type == ida_ua.o_void:
             break
-        # Fingerprint the operand by its rendered text so that distinct
-        # memory operands (e.g. [rdi] vs [rsi]) don't collide.
         text = idc.print_operand(ea, i) or ""
         op_reprs.append((op.type, text))
         if op.type == ida_ua.o_imm:
@@ -404,22 +345,10 @@ def _xor_instruction_info(ea):
     }
 
 
-# Constants a real decryption stub would never use. All three families of
-# noise this rejects come up constantly on Go / Rust / C++ stdlib:
-#   * 0 is a no-op, 1 / -1 are boolean-flip and bitwise-NOT idioms
-#     (`xor eax, 1` after a conditional).
-#   * 2, 3 are small bit-flag toggles (`flags ^= EPOLLERR`).
-#   * 0xFFFF / 0xFFFFFFFF / 0xFFFF...FF are word/dword/qword full-width
-#     masks used in memcmp fast-paths and endian tricks.
-# Real byte or dword decryption keys are virtually always outside this set;
-# a genuine byte-mask decoder uses 0x80, 0xAA, 0x5A, etc. — never 1..3.
 _TRIVIAL_XOR_CONSTS = {
     0, 1, 2, 3, -1,
-    # Single-bit / small-power-of-two flag toggles (`flags ^= FLAG_X`)
     4, 8, 0x10, 0x20, 0x40, 0x80,
-    # Common nibble/byte inversion patterns
     0x0F, 0xF0,
-    # Full-width word/dword/qword masks (bitwise-NOT idioms)
     0xFFFF, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
 }
 
@@ -462,11 +391,6 @@ def xor_decryption_loop_sites(function, xor_check=_computes_xor_const):
     return sites
 
 
-# ---------------------------------------------------------------------------
-# RC4 heuristics
-# ---------------------------------------------------------------------------
-
-
 def _iter_immediates(ea):
     insn = ida_ua.insn_t()
     if not ida_ua.decode_insn(insn, ea):
@@ -479,14 +403,8 @@ def _iter_immediates(ea):
             yield op.value
 
 
-# RC4 KSA is compact — a huge function that happens to have two loops and a
-# 256-byte allocation somewhere is almost never doing key scheduling. Real
-# implementations fit within a few dozen blocks.
 _RC4_KSA_MAX_BLOCKS = 50
 
-# Real RC4 KSA references 0x100 at least twice: as the S-box init loop bound
-# and again in the permutation loop bound. A lone 0x100 (stack allocation,
-# ASCII/unicode threshold, single loop cap) doesn't qualify.
 _RC4_KSA_MIN_HITS = 2
 
 
@@ -522,15 +440,15 @@ def _has_byte_indexed_store(function):
                 continue
             mnem = insn.get_canon_mnem().lower()
             if mnem == "stosb":
-                return True  # unconditional byte-store to [rdi]
+                return True
             if mnem not in _STORE_MNEMS:
                 continue
-            op = insn.ops[0]  # destination
+            op = insn.ops[0]
             if op.type not in (ida_ua.o_phrase, ida_ua.o_displ):
                 continue
             if _dtype_size(op.dtype) != 1:
                 continue
-            if getattr(op, "specflag1", 0):  # SIB byte present → indexed
+            if getattr(op, "specflag1", 0):
                 return True
     return False
 
@@ -587,7 +505,7 @@ def _loop_has_byte_indexed_load(function):
                     continue
                 if _dtype_size(op.dtype) != 1:
                     continue
-                if getattr(op, "specflag1", 0):  # SIB byte → base+index
+                if getattr(op, "specflag1", 0):
                     return True
     return False
 
@@ -613,11 +531,6 @@ def rc4_prga_sites(function):
     return sites
 
 
-# ---------------------------------------------------------------------------
-# Opcode utilities / n-grams
-# ---------------------------------------------------------------------------
-
-
 def sliding_window(values, window_size):
     for index in range(len(values) - window_size + 1):
         yield values[index : index + window_size]
@@ -628,7 +541,7 @@ def opcode_at(ea):
     return m.replace(" ", "").lower()
 
 
-_NGRAM_CACHE = {}  # (function.start, n) -> Counter
+_NGRAM_CACHE = {}
 
 
 def invalidate_ngram_cache():
@@ -657,8 +570,7 @@ def calc_global_ngrams(functions, n):
     return global_grams
 
 
-_MIN_NGRAM_TOTAL = 30  # a function needs enough instructions before its
-                       # ngram score is statistically meaningful
+_MIN_NGRAM_TOTAL = 30
 
 
 def calc_uncommon_instruction_sequences_score(function, ngram_database):
@@ -670,21 +582,11 @@ def calc_uncommon_instruction_sequences_score(function, ngram_database):
     return count / total
 
 
-# ---------------------------------------------------------------------------
-# Duplicate subgraphs via iterative context signatures
-# ---------------------------------------------------------------------------
-
-
 def compute_local_signature(block):
     return "".join(opcode_at(ea) for ea in block.instruction_addresses())
 
 
 def compute_context_signatures(function, num_iterations):
-    # Hash the raw local signatures up-front so every iteration works on
-    # fixed 32-char hex strings. Otherwise a function with a single
-    # 3000-instruction block (unrolled crypto) produces a multi-KB local
-    # signature that then gets concatenated across neighbours — memory grew
-    # multiplicatively per iteration on huge functions before this change.
     context_signatures = {
         b: md5(compute_local_signature(b).encode()).hexdigest()
         for b in function.basic_blocks
@@ -705,10 +607,6 @@ def count_context_signature_duplicates(function, num_iterations=2):
         return 0
     return len(sigs) - len(set(sigs.values()))
 
-
-# ---------------------------------------------------------------------------
-# Mixed boolean arithmetic via Hex-Rays microcode (optional)
-# ---------------------------------------------------------------------------
 
 _ARITH_OPS = None
 _BOOL_OPS = None
@@ -737,32 +635,14 @@ def _init_mba_opsets():
     return True
 
 
-# MBA (Hex-Rays microcode) heuristic can crash IDA. The crash happens inside
-# Hex-Rays' native C++ code (stkret / stack-return analysis on Go-produced
-# functions, non-standard ABIs, etc.) so Python try/except cannot catch it —
-# once it fires, IDA is gone. Defences in ascending order of severity:
-#
-#   * _MBA_MAX_BLOCKS         block-count ceiling. Real MBA crypto stays
-#                             under ~150 blocks even fully-inlined; anything
-#                             bigger is a switch dispatcher / goroutine
-#                             trampoline Hex-Rays occasionally chokes on.
-#   * MBA_SKIP_NAME_SUBSTRINGS names known to crash Hex-Rays on Go binaries.
-#   * MBA_CRASH_JOURNAL_PATH  file listing addresses that crashed IDA on a
-#                             previous run. Populate manually or by writing
-#                             the address printed just before the crash.
-#   * ENABLE_MBA_HEURISTIC    master kill-switch. Set OBFDET_NO_MBA=1 in
-#                             the env, or edit this file, to skip MBA
-#                             entirely for a binary known to crash it.
 import os as _os
 
 ENABLE_MBA_HEURISTIC = _os.environ.get("OBFDET_NO_MBA") is None
 
-_MBA_MIN_BLOCKS = 3    # skip trivial functions to avoid decompiling everything
-_MBA_MAX_BLOCKS = 200  # cap on function size handed to Hex-Rays; real MBA
-                       # crypto (SHA/AES fully-inlined) stays under ~150 blocks
+_MBA_MIN_BLOCKS = 3
+_MBA_MAX_BLOCKS = 200
 
 MBA_SKIP_NAME_SUBSTRINGS = (
-    # Go runtime pieces known to trip Hex-Rays stack-return analysis:
     "runtime.reflectcall",
     "runtime.duffcopy",
     "runtime.duffzero",
@@ -780,7 +660,6 @@ MBA_SKIP_NAME_SUBSTRINGS = (
     "type..eq.",
     ".deferwrap",
     ".gowrap",
-    # Non-standard ABI trampolines the decompiler stumbles on:
     "callbackasm",
     "stdcall_trampoline",
 )
@@ -813,9 +692,6 @@ def calculate_complex_arithmetic_expressions(function):
         import ida_hexrays
     except ImportError:
         return 0
-    # Flush the address BEFORE the call. If Hex-Rays segfaults, this will be
-    # the last line in the log — telling the user which function to add to
-    # MBA_SKIP_NAME_SUBSTRINGS or which run to disable with OBFDET_NO_MBA.
     import sys as _sys
     print("[obfdet] MBA gen_microcode: 0x%x (%s) [%d blocks]" % (
         function.start, name, n_blocks))
@@ -870,11 +746,6 @@ def calculate_complex_arithmetic_expressions(function):
     return counter[0]
 
 
-# ---------------------------------------------------------------------------
-# Entropy
-# ---------------------------------------------------------------------------
-
-
 def calculate_entropy(data):
     if not data:
         return 0.0
@@ -885,11 +756,6 @@ def calculate_entropy(data):
         p = count / total
         entropy -= p * log2(p)
     return entropy
-
-
-# ---------------------------------------------------------------------------
-# Ranking
-# ---------------------------------------------------------------------------
 
 
 def get_top_10_functions(functions, scoring_function):
@@ -903,11 +769,6 @@ def sort_elements(iterator, scoring_function):
     scored = sorted(((elem, scoring_function(elem)) for elem in iterator), key=lambda x: x[1])
     for element, score in list(reversed(scored)):
         yield element, score
-
-
-# ---------------------------------------------------------------------------
-# Overlapping instructions
-# ---------------------------------------------------------------------------
 
 
 def compute_overlapping_instruction_addresses():
@@ -944,11 +805,6 @@ def functions_containing(ea):
     if func is not None:
         result.append(func.start_ea)
     return result
-
-
-# ---------------------------------------------------------------------------
-# Sections (segments in IDA)
-# ---------------------------------------------------------------------------
 
 
 def iter_segments():

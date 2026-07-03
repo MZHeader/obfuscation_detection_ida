@@ -37,7 +37,6 @@ def ida_arch_name():
     return info or "unknown"
 
 
-# 1k most common 3-grams for X86_64
 MOST_COMMON_3GRAMS_X86_64 = {
     "addaddadd",
     "addaddcmp",
@@ -1041,7 +1040,6 @@ MOST_COMMON_3GRAMS_X86_64 = {
     "xorxorxor",
 }
 
-# 1k most common 3-grams for X86_32
 MOST_COMMON_3GRAMS_X86_32 = {
     "adcmovmov",
     "addadcadd",
@@ -2045,7 +2043,6 @@ MOST_COMMON_3GRAMS_X86_32 = {
     "xorxoror",
 }
 
-# 1k most common 3-grams for AARCH64
 MOST_COMMON_3GRAMS_AARCH64 = {
     "addaddadd",
     "addaddadrp",
@@ -3049,7 +3046,6 @@ MOST_COMMON_3GRAMS_AARCH64 = {
     "tstb.nemov",
 }
 
-# 1k most common 3-grams for ARM32
 MOST_COMMON_3GRAMS_ARM32 = {
     "adc.sadcorr",
     "adcorr.sbiceq",
@@ -4053,7 +4049,6 @@ MOST_COMMON_3GRAMS_ARM32 = {
     "tstsubeqbeq",
 }
 
-# 3k most common LLIL 3-grams based on x86, x86_64, ARM32 and AARCH64 samples
 MOST_COMMON_3GRAMS_LLIL = {
     "LowLevelILOperation.LLIL_ADCLowLevelILOperation.LLIL_ANDLowLevelILOperation.LLIL_SET_FLAG",
     "LowLevelILOperation.LLIL_ADCLowLevelILOperation.LLIL_IFLowLevelILOperation.LLIL_AND",

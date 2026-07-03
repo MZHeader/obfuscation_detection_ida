@@ -47,7 +47,6 @@ PLUGIN_HOTKEY = ""
 PLUGIN_VERSION = "1.0"
 
 
-# (label, callable, tooltip)
 _ACTIONS = [
     ("Show Results View", show_results_view, "Open the dockable table of all findings"),
     ("All heuristics + utils (excl. MBA)", run_all, "MBA excluded; run separately"),
@@ -97,8 +96,6 @@ def _open_chooser():
     if idx < 0:
         return
     label, fn, _ = _ACTIONS[idx]
-    # Opening the results view is a UI action, not an analysis pass; skip
-    # the cache flush so it stays snappy.
     if fn is not show_results_view:
         invalidate_function_cache()
     try:

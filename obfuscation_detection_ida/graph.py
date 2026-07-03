@@ -79,30 +79,25 @@ class FunctionGraph(object):
         self.start = func.start_ea
         self.end = func.end_ea
         self.name = ida_funcs.get_func_name(func.start_ea) or ("sub_%x" % func.start_ea)
-        # Build FlowChart, ignoring external blocks.
         fc = idaapi.FlowChart(func, flags=idaapi.FC_PREDS | idaapi.FC_NOEXT)
         self.blocks = []
         self._entry_id = None
         for node in fc:
             b = Block(self, node)
-            # extend list to hold this id
             while len(self.blocks) <= node.id:
                 self.blocks.append(None)
             self.blocks[node.id] = b
             if node.start_ea == func.start_ea:
                 self._entry_id = node.id
-        # Drop any Nones (shouldn't happen but be safe)
         self.blocks = [b for b in self.blocks if b is not None]
-        # Fix up entry: FlowChart's node 0 is usually the entry.
         if self._entry_id is None and self.blocks:
             self._entry_id = self.blocks[0].id
 
-        self._dom = None            # immediate dominator: id -> id
-        self._dom_tree = None       # id -> [child ids]
-        self._dom_frontier = None   # id -> set(ids)
-        self._back_edges = None     # list of Edge
+        self._dom = None
+        self._dom_tree = None
+        self._dom_frontier = None
+        self._back_edges = None
 
-    # ---------- accessors used by heuristics ----------
 
     @property
     def basic_blocks(self):
@@ -119,7 +114,6 @@ class FunctionGraph(object):
             for ea in b.instruction_addresses():
                 yield ea
 
-    # ---------- dominators ----------
 
     def _compute_dominators(self):
         """Cooper–Harvey–Kennedy iterative dominator algorithm."""
@@ -127,7 +121,6 @@ class FunctionGraph(object):
             self._dom = {}
             return
         entry = self.entry_block()
-        # Reverse-post-order from entry.
         order = self._reverse_postorder(entry)
         rpo_index = {b.id: i for i, b in enumerate(order)}
         dom = {b.id: None for b in self.blocks}
@@ -228,7 +221,6 @@ class FunctionGraph(object):
             cur = parent
         return False
 
-    # ---------- dominance frontier ----------
 
     def dominance_frontier(self):
         if self._dom_frontier is not None:
@@ -257,7 +249,6 @@ class FunctionGraph(object):
         df = self.dominance_frontier()
         return block in df.get(block.id, set())
 
-    # ---------- back edges ----------
 
     def back_edges(self):
         """Edges (u -> v) where v dominates u."""

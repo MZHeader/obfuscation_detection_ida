@@ -13,7 +13,6 @@ import sys
 import ida_auto
 import ida_pro
 
-# Locate the sibling package regardless of where IDA was launched from.
 _HERE = os.path.dirname(os.path.abspath(__file__))
 _ROOT = os.path.dirname(_HERE)
 if _ROOT not in sys.path:

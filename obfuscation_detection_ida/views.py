@@ -15,16 +15,14 @@ _QT_OK = False
 _QtCore = None
 _QtWidgets = None
 
-# IDA 9 ships PySide6; IDA 8 ships PySide2; PyQt5 is only used as a last-ditch
-# fallback since IDA 9 warns about it. Try Qt bindings in that preference order.
 for _mod in ("PySide6", "PySide2", "PyQt5"):
     try:
         if _mod == "PySide6":
-            from PySide6 import QtCore as _QtCore, QtWidgets as _QtWidgets  # noqa: F401
+            from PySide6 import QtCore as _QtCore, QtWidgets as _QtWidgets
         elif _mod == "PySide2":
-            from PySide2 import QtCore as _QtCore, QtWidgets as _QtWidgets  # noqa: F401
+            from PySide2 import QtCore as _QtCore, QtWidgets as _QtWidgets
         else:
-            from PyQt5 import QtCore as _QtCore, QtWidgets as _QtWidgets  # noqa: F401
+            from PyQt5 import QtCore as _QtCore, QtWidgets as _QtWidgets
         _QT_OK = True
         break
     except ImportError:
@@ -33,9 +31,6 @@ for _mod in ("PySide6", "PySide2", "PyQt5"):
 
 _COLUMNS = ("Heuristic", "Function", "Address", "Score", "Sites")
 
-# Human-readable unit for each `extra_key` a finding can carry. Used to
-# format the Score column as e.g. "78 cc" or "5 loops" instead of a bare
-# number that could mean anything.
 _SCORE_UNITS = {
     "state_machine_score": "flatness",
     "cyclomatic_complexity": "cc",
@@ -52,7 +47,7 @@ _SCORE_UNITS = {
 _INSTANCE = None
 
 
-_SORT_ROLE = None  # populated once Qt is loaded
+_SORT_ROLE = None
 
 
 def _make_numeric_item_class():
@@ -101,7 +96,7 @@ class _ResultsForm(ida_kernwin.PluginForm):
         super(_ResultsForm, self).__init__()
         self._parent = None
         self._table = None
-        self._rows = []  # list of dicts
+        self._rows = []
 
     def OnCreate(self, form):
         if not _QT_OK:
@@ -132,7 +127,6 @@ class _ResultsForm(ida_kernwin.PluginForm):
         self._repopulate()
 
     def OnClose(self, form):
-        # Keep _rows and _INSTANCE so re-opening restores state. Just drop UI refs.
         self._parent = None
         self._table = None
 
@@ -167,13 +161,11 @@ class _ResultsForm(ida_kernwin.PluginForm):
         item = self._table.item(index.row(), col)
         ea = item.data(_QtCore.Qt.UserRole) if item is not None else None
         if ea is None:
-            # fall back to the address column
             ea_item = self._table.item(index.row(), 2)
             ea = ea_item.data(_QtCore.Qt.UserRole) if ea_item is not None else None
         if ea is not None:
             ida_kernwin.jumpto(int(ea))
 
-    # ---- public API used by heuristics ----
 
     def add_finding(self, finding, tag_type, extra_key=None):
         anchors = list(finding.get("anchor_addresses", []) or [])

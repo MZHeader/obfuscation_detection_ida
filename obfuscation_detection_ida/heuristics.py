@@ -39,7 +39,7 @@ from .tagging import (
 )
 from .views import results_view
 
-_HIGHLIGHT_COLOUR = 0x00FFFF  # RGB yellow (BGR in set_color)
+_HIGHLIGHT_COLOUR = 0x00FFFF
 
 
 def _print_banner(name):
@@ -65,7 +65,6 @@ def _apply(findings, tag_type, extra_key=None):
         _print_finding(finding, extra_key)
         start = int(finding["address"], 16)
         tag_function(start, tag_type, finding["description"])
-        # If the finding pinpoints specific instructions, annotate each one.
         for anchor in finding.get("anchor_addresses", ()):
             annotate_ea(anchor, tag_type, finding["description"])
         if view is not None:
@@ -96,7 +95,6 @@ def find_duplicated_subgraphs():
 
 def find_instruction_overlapping():
     _print_banner("Overlapping Instruction")
-    # Highlight overlapping bytes in the disassembly view.
     for addr in compute_overlapping_instruction_addresses():
         try:
             idc.set_color(addr, idc.CIC_ITEM, _HIGHLIGHT_COLOUR)

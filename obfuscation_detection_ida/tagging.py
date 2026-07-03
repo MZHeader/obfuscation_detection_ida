@@ -73,7 +73,6 @@ def tag_function(function, tag_type, data=""):
     existing = idc.get_func_cmt(ea, 1) or ""
     for present in existing.splitlines():
         if present.startswith(_TAG_MARKER) and tag_type in present:
-            # already tagged; refresh with new data
             new_lines = [l for l in existing.splitlines() if not (l.startswith(_TAG_MARKER) and tag_type in l)]
             new_lines.append(line)
             idc.set_func_cmt(ea, "\n".join(new_lines), 1)
