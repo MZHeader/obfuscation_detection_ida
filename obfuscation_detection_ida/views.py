@@ -33,6 +33,21 @@ for _mod in ("PySide6", "PySide2", "PyQt5"):
 
 _COLUMNS = ("Heuristic", "Function", "Address", "Score", "Sites")
 
+# Human-readable unit for each `extra_key` a finding can carry. Used to
+# format the Score column as e.g. "78 cc" or "5 loops" instead of a bare
+# number that could mean anything.
+_SCORE_UNITS = {
+    "state_machine_score": "flatness",
+    "cyclomatic_complexity": "cc",
+    "avg_instructions_per_block": "insns/block",
+    "uncommon_sequences_score": "uncommon",
+    "num_callers": "callers",
+    "num_loops": "loops",
+    "num_irreducible_loops": "irreducible loops",
+    "num_duplicate_subgraphs": "duplicates",
+    "num_mba_instructions": "MBA ops",
+}
+
 _INSTANCE = None
 
 
@@ -166,17 +181,19 @@ class _ResultsForm(ida_kernwin.PluginForm):
         if extra_key and extra_key in finding:
             raw = finding[extra_key]
             if isinstance(raw, float):
-                score_display = "%.3f" % raw
+                value_text = "%.3f" % raw
                 score_sort = raw
             elif isinstance(raw, int):
-                score_display = str(raw)
+                value_text = str(raw)
                 score_sort = raw
             else:
-                score_display = str(raw)
+                value_text = str(raw)
                 try:
                     score_sort = float(raw)
                 except (TypeError, ValueError):
                     score_sort = None
+            unit = _SCORE_UNITS.get(extra_key, "")
+            score_display = ("%s %s" % (value_text, unit)).strip()
         row = {
             "heuristic": tag_type,
             "name": finding.get("name", ""),

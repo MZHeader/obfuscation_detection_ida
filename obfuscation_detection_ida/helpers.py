@@ -37,10 +37,48 @@ _FUNCTION_LIST_CACHE = None
 
 # IDA function-flag bits we always want to exclude from scoring: recognised
 # library code (FLIRT / IDA Teams / user-marked), and thunks / wrappers.
-# These are never the malware you're chasing but they routinely dominate
-# every top-N heuristic because CRT / OpenSSL / STL functions have real
-# cyclomatic complexity, real basic blocks, real callers, real loops.
 _SKIP_FUNC_FLAGS = ida_funcs.FUNC_LIB | ida_funcs.FUNC_THUNK
+
+# Only score functions whose name is IDA's auto-generated placeholder. In a
+# reverse-engineering session the placeholders are the ones you haven't
+# analysed yet; anything IDA has resolved from PDB / FLIRT / mangling, or
+# that you renamed by hand, is by definition either library code or already
+# understood. Set to False if you want to score everything (e.g. for a
+# non-malware binary where symbols are user code).
+SKIP_NAMED_FUNCTIONS = True
+
+# Prefixes IDA uses for its automatic per-address names. Anything starting
+# with one of these is treated as unnamed / unanalysed. Used as a fallback
+# when the ida_bytes flag-based check isn't available.
+_AUTO_NAME_PREFIXES = (
+    "sub_",
+    "loc_",
+    "locret_",
+    "nullsub_",
+    "j_",
+    "def_",
+    "unknown_libname_",
+    "start_",  # IDA's auto-numbered secondary entry points
+)
+
+
+def _has_user_name(ea):
+    """True if IDA marks this address as having a user/library-supplied name.
+
+    Prefers the flag-based check (which correctly identifies PDB/FLIRT/user
+    names of any shape) and falls back to prefix matching on older IDA
+    builds that don't expose `has_user_name` on `ida_bytes`.
+    """
+    try:
+        flags = ida_bytes.get_flags(ea)
+    except Exception:
+        flags = None
+    if flags is not None:
+        checker = getattr(ida_bytes, "has_user_name", None)
+        if checker is not None:
+            return bool(checker(flags))
+    name = ida_funcs.get_func_name(ea) or ""
+    return not name.startswith(_AUTO_NAME_PREFIXES)
 
 
 def invalidate_function_cache():
@@ -66,17 +104,23 @@ def _build_function_graph(ea):
         return None
 
 
+def _has_auto_name(ea):
+    name = ida_funcs.get_func_name(ea) or ""
+    return name.startswith(_AUTO_NAME_PREFIXES)
+
+
 def _is_scorable(func):
     """True if the function should participate in obfuscation heuristics.
 
     Excludes library-tagged functions (FLIRT hits, imports) and thunks. Also
-    excludes external functions (no body in this binary).
+    excludes anything IDA (or the user) has already given a real name if
+    SKIP_NAMED_FUNCTIONS is enabled.
     """
     if func is None:
         return False
     if func.flags & _SKIP_FUNC_FLAGS:
         return False
-    if func.flags & ida_funcs.FUNC_LIB:  # belt-and-suspenders
+    if SKIP_NAMED_FUNCTIONS and not _has_auto_name(func.start_ea):
         return False
     return True
 
