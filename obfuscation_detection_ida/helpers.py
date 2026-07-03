@@ -253,11 +253,21 @@ def calc_state_machine_score(function):
     if total == 0:
         return 0.0
     score = 0.0
+    # Pre-compute the set of blocks that participate in a natural loop.
+    # A wide-fanout dispatcher may not have back-edges pointing directly
+    # at itself (the compiler often emits `while(1) { switch(state) {} }`
+    # where the back-edge targets the LOOP HEAD, not the dispatch block
+    # nested inside it). PlugX's VM interpreter has exactly that shape.
+    loop_blocks = set()
+    for block in compute_blocks_in_natural_loops(function):
+        loop_blocks.add(block)
     for block in function.basic_blocks:
         if len(block.successors) < _MIN_DISPATCHER_SUCCESSORS:
             continue
         dominated = function.dominated_by(block)
-        if not any(edge.source in dominated for edge in block.incoming_edges):
+        has_direct_backedge = any(edge.source in dominated for edge in block.incoming_edges)
+        in_loop = block in loop_blocks
+        if not has_direct_backedge and not in_loop:
             continue
         score = max(score, len(dominated) / total)
     if score > 0:
