@@ -1,15 +1,10 @@
 # Obfuscation Detection for IDA Pro
 
 > Port of [mrphrazer/obfuscation_detection](https://github.com/mrphrazer/obfuscation_detection)
-> by [Tim Blazytko](https://github.com/mrphrazer). Original targets Binary Ninja;
-> a Ghidra version lives at [mrphrazer/obfuscation_detection_ghidra](https://github.com/mrphrazer/obfuscation_detection_ghidra).
+> by [Tim Blazytko](https://github.com/mrphrazer).
 
-Same idea as the original: run a pile of heuristics that tend to light up
-on obfuscated, packed, or crypto-heavy binaries. Flagged functions get a
-repeatable comment saying why. Findings tied to a specific instruction
-also get a comment on that line, and Hex-Rays picks it up on the matching
-pseudocode statement. Overlapping instructions are highlighted, and
-everything is printed to the Output window.
+Same idea as the original but for IDA Pro. Flagged functions get a
+repeatable comment saying why they were flagged. Findings tied to a specific instruction also get a comment on that line. Results also show up in a dockable table and get logged to the Output window.
 
 ## What it looks for
 
@@ -24,8 +19,9 @@ Heuristics:
 * Functions with many natural loops
 * Irreducible loops
 * XOR-by-constant inside a loop
-* Mixed boolean-arithmetic (needs Hex-Rays)
+* Mixed boolean-arithmetic (needs Hex-Rays; excluded from `run_all` since it can crash IDA on some binaries)
 * Repeated CFG subgraphs
+* Basic-block-splitting (high blocks-per-branch ratio)
 
 Utilities:
 
@@ -35,8 +31,7 @@ Utilities:
 
 ## Install
 
-Drop the loader (`obfuscation_detection.py`) and its package
-(`obfuscation_detection_ida/`) into your IDA user plugins directory.
+Drop `obfuscation_detection.py` and `obfuscation_detection_ida/` into your IDA plugins directory.
 
 ### Linux / macOS
 
@@ -53,19 +48,16 @@ Drop the loader (`obfuscation_detection.py`) and its package
 ```
 
 Restart IDA. You should see `[obfdet] Obfuscation Detection 1.0 loaded.` in
-the Output window. The plugin adds a single entry under
-**Edit > Plugins > Obfuscation Detection** that opens a picker with every
-heuristic (including "All heuristics + utils" and "Show Results View").
+the Output window.
 
-## Using it
-
-Click **Edit > Plugins > Obfuscation Detection**, then double-click a
-heuristic in the picker.
+## Usage 
+The plugin adds an entry under
+**Edit > Plugins > Obfuscation Detection** that opens a menu with every
+heuristic.
 
 ![Chooser dialog](imgs/chooser.png)
- Open **Show Results View** once at the start of a
-session to get a dockable table that accumulates findings as you go;
-double-clicking a row jumps IDA to that address.
+
+Open **Show Results View** once at the start of a session to get a dockable table that accumulates findings as you go. Double-clicking a row will take you to that function.
 
 From the IDAPython console:
 
@@ -81,28 +73,20 @@ from obfuscation_detection_ida import (
 run_all()
 ```
 
-Function-level findings go into the function's repeatable comment as
-lines like `[obfdet] Heuristic: State Machine: ...`. Findings tied to a
-specific instruction (XOR loops, RC4 KSA/PRGA constants, overlapping
-bytes) also drop a matching comment on that exact line, and Hex-Rays
-shows it on the corresponding pseudocode statement. Comments are
-grep-friendly and survive IDB saves. Re-running a heuristic replaces its
-previous comment instead of stacking duplicates.
+Findings are added as a comment: `[obfdet] Heuristic: State Machine: ...`. 
 
 ## Notes about the port
 
 A few things differ from the Binary Ninja original because IDA's SDK
 doesn't give you the same primitives:
 
-* No first-class tag types in IDA. Findings go into the function's
-  repeatable comment (and the per-instruction disasm/pseudocode comment
-  for site-specific findings), all prefixed with `[obfdet]`.
+* No first-class tag types in IDA. Findings are added as a comment, prefixed with `[obfdet]`.
 * Dominators, dominance frontiers, and back-edge detection are computed
   by the plugin (Cooper-Harvey-Kennedy). IDA's `FlowChart` doesn't hand
   those to you.
 * XOR-in-loop and RC4 PRGA detection run on assembly mnemonics rather than
   a lifted IL, since IDA has no LLIL equivalent that's usable without the
-  decompiler. Common `xor`/`eor` patterns are caught; XOR expressed via
+  decompiler. Common `xor`/`eor` patterns are caught. XOR expressed via
   lifted arithmetic is not.
 * Mixed-boolean-arithmetic detection uses Hex-Rays microcode at
   `MMAT_LVARS`. If the decompiler isn't installed the heuristic returns 0
