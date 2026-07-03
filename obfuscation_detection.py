@@ -61,9 +61,8 @@ PLUGIN_VERSION = "1.0"
 
 
 _ACTIONS = [
-    ("Show Results View", show_results_view, "Open the dockable table of all findings"),
-    ("Configure: Findings Cap", _configure_findings_cap, "Set max findings per heuristic (default 30)"),
     ("All heuristics + utils (excl. MBA)", run_all, "MBA excluded; run separately"),
+    ("Configure: Findings Cap", _configure_findings_cap, "Set max findings per heuristic (default 30)"),
     ("State Machine", find_state_machines, "Detect state machines / control-flow flattening"),
     ("Complex Function", find_complex_functions, "Rank functions by cyclomatic complexity"),
     ("Large Basic Block", find_large_basic_blocks, "Functions with unusually large basic blocks"),
@@ -83,6 +82,7 @@ _ACTIONS = [
     ("Utils: Recursive Function", find_recursive_functions, "Self-recursive functions"),
     ("Utils: Section Entropy", compute_section_entropy, "Entropy of each segment"),
     ("Utils: RC4", find_rc4, "Possible RC4 KSA / PRGA implementations"),
+    ("Show Results View", show_results_view, "Focus the dockable results table"),
 ]
 
 
