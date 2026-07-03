@@ -161,17 +161,26 @@ def clear_ea_annotation(ea, tag_type):
 _REVIEWED_MARKER = "[obfdet-reviewed]"
 
 
-def clear_obfdet_for_function(ea):
+def clear_obfdet_for_function(ea, include_reviewed=False):
     """Strip [obfdet] lines from one function and its instruction comments.
-    Preserves the [obfdet-reviewed] marker. Returns (func_cleaned, eas_cleaned)."""
+    When include_reviewed is True, also drop the [obfdet-reviewed] marker.
+    Returns (func_cleaned, eas_cleaned)."""
     import idautils
     func = ida_funcs.get_func(ea)
     if func is None:
         return 0, 0
     func_cleaned = 0
     existing = idc.get_func_cmt(ea, 1) or ""
-    if _TAG_MARKER in existing:
-        remaining = [l for l in existing.splitlines() if not l.startswith(_TAG_MARKER)]
+
+    def _strip(line):
+        if line.startswith(_TAG_MARKER):
+            return True
+        if include_reviewed and line.strip() == _REVIEWED_MARKER:
+            return True
+        return False
+
+    if _TAG_MARKER in existing or (include_reviewed and _REVIEWED_MARKER in existing):
+        remaining = [l for l in existing.splitlines() if not _strip(l)]
         idc.set_func_cmt(ea, "\n".join(remaining), 1)
         func_cleaned = 1
     eas_cleaned = 0
@@ -203,7 +212,7 @@ def clear_all_obfdet_tags():
     funcs_cleaned = 0
     eas_cleaned = 0
     for ea in idautils.Functions():
-        f, e = clear_obfdet_for_function(ea)
+        f, e = clear_obfdet_for_function(ea, include_reviewed=True)
         funcs_cleaned += f
         eas_cleaned += e
     return funcs_cleaned, eas_cleaned
