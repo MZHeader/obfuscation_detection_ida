@@ -111,7 +111,11 @@ MIN_UNCOMMON_SEQ_SCORE = 0.60            # >=60% of 3-grams unseen in reference
 MIN_CALLERS = 30                         # library-tier helpers, not "used twice"
 MIN_LOOPS = 5                            # 1-4 loops is routine
 MIN_IRREDUCIBLE_LOOPS = 1                # already guarded; kept for symmetry
-MIN_DUPLICATE_SUBGRAPHS = 1              # already guarded
+MIN_DUPLICATE_SUBGRAPHS = 4              # 2-3 duplicates is call-site clustering,
+                                         # not obfuscation
+MIN_MBA_INSTRUCTIONS = 5                 # a single mixed op is any normal xor/shift
+MIN_LEAF_INSTRUCTIONS = 20               # tiny leaves are helpers, not outlined code
+MIN_ENTRY_INSTRUCTIONS = 5               # ditto for uncalled entry-like fragments
 
 
 def _cap(findings, key=None):
@@ -193,7 +197,7 @@ def find_duplicate_subgraph_reports():
         for f, score in get_top_10_functions(
             _functions(), count_context_signature_duplicates
         )
-        if score != 0
+        if _above(score, MIN_DUPLICATE_SUBGRAPHS)
     ]
     return _cap(findings)
 
@@ -292,7 +296,7 @@ def find_complex_arithmetic_expression_reports():
         for f, score in get_top_10_functions(
             _functions(), calculate_complex_arithmetic_expressions
         )
-        if score != 0
+        if _above(score, MIN_MBA_INSTRUCTIONS)
     ]
     return _cap(findings)
 
@@ -331,11 +335,16 @@ def find_irreducible_loop_reports():
     return _cap(findings)
 
 
+def _instruction_count(function):
+    return sum(1 for _ in function.instruction_addresses())
+
+
 def find_entry_function_reports():
     return [
         function_finding(f, TAG_ENTRY_FUNCTION, TAG_DESC_ENTRY_FUNCTION)
         for f in _functions()
         if len(callers_of(f)) == 0
+        and _instruction_count(f) >= MIN_ENTRY_INSTRUCTIONS
     ]
 
 
@@ -343,7 +352,8 @@ def find_leaf_function_reports():
     return [
         function_finding(f, TAG_LEAF_FUNCTION, TAG_DESC_LEAF_FUNCTION)
         for f in _functions()
-        if len(callees_of(f)) == 0 and sum(1 for _ in f.instruction_addresses()) > 1
+        if len(callees_of(f)) == 0
+        and _instruction_count(f) >= MIN_LEAF_INSTRUCTIONS
     ]
 
 
