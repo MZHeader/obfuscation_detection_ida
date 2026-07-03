@@ -90,16 +90,20 @@ def _functions():
 
 
 # Minimum absolute score a function needs to keep after the top-10% ranking.
-# The Binary Ninja original only uses the percentile cut, but on medium/large
-# binaries that floods the results view with mundane functions that only look
-# suspicious relative to a small population. These thresholds prune the
-# obvious non-hits while preserving anything genuinely interesting.
-MIN_STATE_MACHINE_SCORE = 0.30           # >=30% of blocks under one dominator
-MIN_CYCLOMATIC_COMPLEXITY = 15           # ~15+ branches
-MIN_AVG_BLOCK_INSTRUCTIONS = 20          # tight, unrolled, or crypto-shaped
-MIN_UNCOMMON_SEQ_SCORE = 0.30            # 30% of 3-grams unseen in reference
-MIN_CALLERS = 5                          # helpers with real reuse
-MIN_LOOPS = 2                            # single-loop functions are boring
+# Real obfuscation samples score much higher than "top decile of an ordinary
+# binary", so these gates are deliberately strict. Edit the constants in this
+# file to loosen them if you're studying a codebase where obfuscation is
+# subtle. Also see MIN_BLOCKS_* which require the function to be big enough
+# for the score to be meaningful in the first place.
+MIN_STATE_MACHINE_SCORE = 0.65           # dispatcher dominates >=65% of CFG
+MIN_STATE_MACHINE_BLOCKS = 15            # need a real CFG, not a 4-block stub
+MIN_CYCLOMATIC_COMPLEXITY = 30           # normal functions rarely hit 30+
+MIN_COMPLEX_FUNCTION_BLOCKS = 15
+MIN_AVG_BLOCK_INSTRUCTIONS = 30          # crypto / unrolled code territory
+MIN_LARGE_BLOCK_BLOCKS = 3               # single-block functions don't count
+MIN_UNCOMMON_SEQ_SCORE = 0.50            # >=50% of 3-grams unseen in reference
+MIN_CALLERS = 20                         # library-tier helpers, not "used twice"
+MIN_LOOPS = 4                            # 1-3 loops is routine
 MIN_IRREDUCIBLE_LOOPS = 1                # already guarded; kept for symmetry
 MIN_DUPLICATE_SUBGRAPHS = 1              # already guarded
 
@@ -108,6 +112,13 @@ def _above(score, threshold):
     try:
         return float(score) >= threshold
     except (TypeError, ValueError):
+        return False
+
+
+def _has_blocks(function, minimum):
+    try:
+        return len(function.basic_blocks) >= minimum
+    except Exception:
         return False
 
 
@@ -121,6 +132,7 @@ def find_state_machine_reports():
         )
         for f, score in get_top_10_functions(_functions(), calc_state_machine_score)
         if _above(score, MIN_STATE_MACHINE_SCORE)
+        and _has_blocks(f, MIN_STATE_MACHINE_BLOCKS)
     ]
 
 
@@ -134,6 +146,7 @@ def find_complex_function_reports():
         )
         for f, score in get_top_10_functions(_functions(), calc_cyclomatic_complexity)
         if _above(score, MIN_CYCLOMATIC_COMPLEXITY)
+        and _has_blocks(f, MIN_COMPLEX_FUNCTION_BLOCKS)
     ]
 
 
@@ -149,6 +162,7 @@ def find_large_basic_block_reports():
             _functions(), calc_average_instructions_per_block
         )
         if _above(score, MIN_AVG_BLOCK_INSTRUCTIONS)
+        and _has_blocks(f, MIN_LARGE_BLOCK_BLOCKS)
     ]
 
 
