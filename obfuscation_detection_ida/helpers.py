@@ -35,6 +35,13 @@ from .ngrams import determine_ngram_database, ida_arch_name
 _FUNCTION_GRAPH_CACHE = {}
 _FUNCTION_LIST_CACHE = None
 
+# IDA function-flag bits we always want to exclude from scoring: recognised
+# library code (FLIRT / IDA Teams / user-marked), and thunks / wrappers.
+# These are never the malware you're chasing but they routinely dominate
+# every top-N heuristic because CRT / OpenSSL / STL functions have real
+# cyclomatic complexity, real basic blocks, real callers, real loops.
+_SKIP_FUNC_FLAGS = ida_funcs.FUNC_LIB | ida_funcs.FUNC_THUNK
+
 
 def invalidate_function_cache():
     """Drop the cached FunctionGraph objects.
@@ -59,11 +66,28 @@ def _build_function_graph(ea):
         return None
 
 
-def iter_functions():
-    """Yield FunctionGraph wrappers for every function.
+def _is_scorable(func):
+    """True if the function should participate in obfuscation heuristics.
 
-    Results are cached; subsequent calls in the same run reuse the same
-    FunctionGraph objects instead of rebuilding FlowChart + dominators.
+    Excludes library-tagged functions (FLIRT hits, imports) and thunks. Also
+    excludes external functions (no body in this binary).
+    """
+    if func is None:
+        return False
+    if func.flags & _SKIP_FUNC_FLAGS:
+        return False
+    if func.flags & ida_funcs.FUNC_LIB:  # belt-and-suspenders
+        return False
+    return True
+
+
+def iter_functions():
+    """Yield FunctionGraph wrappers for every scorable function.
+
+    Skips FUNC_LIB and FUNC_THUNK, since those are recognised runtime /
+    wrapper code rather than analysis targets. Results are cached; subsequent
+    calls in the same run reuse the same FunctionGraph objects instead of
+    rebuilding FlowChart + dominators.
     """
     global _FUNCTION_LIST_CACHE
     if _FUNCTION_LIST_CACHE is not None:
@@ -73,6 +97,9 @@ def iter_functions():
 
     graphs = []
     for ea in idautils.Functions():
+        func = ida_funcs.get_func(ea)
+        if not _is_scorable(func):
+            continue
         graph = _FUNCTION_GRAPH_CACHE.get(ea)
         if graph is None:
             graph = _build_function_graph(ea)
