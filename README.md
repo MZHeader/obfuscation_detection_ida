@@ -7,20 +7,27 @@ Same idea as the original but for IDA Pro. Flagged functions get a comment sayin
 
 ## What it looks for
 
+The plugin flags functions whose shape suggests something interesting is
+going on: obfuscated control flow, state machines and protocol
+dispatchers, C2 communication, string or code decryption stubs, and
+hand-rolled cryptography. Each heuristic scores functions on a different
+signal, and the results table ranks by how many independent heuristics
+hit the same function, so real obfuscation floats above one-off matches.
+
 Heuristics:
 
 * State machines / control-flow flattening
 * High cyclomatic complexity
 * Unusually large basic blocks
-* Overlapping instructions
-* Rare 3-gram opcode sequences
-* Popular helpers
+* Overlapping instructions (bytes decoded as more than one instruction)
+* Rare 3-gram opcode sequences (scored against a reference table per arch)
+* Popular helpers (functions called from many places, often string decryptors or API-hash resolvers)
 * Functions with many natural loops
 * Irreducible loops
 * XOR-by-constant inside a loop
 * Mixed boolean-arithmetic
-* Repeated CFG subgraphs
-* Basic-block-splitting
+* Repeated CFG subgraphs (cloned obfuscation stubs, unrolled loops)
+* Basic-block splitting (high blocks-per-branch ratio)
 
 Utilities:
 
