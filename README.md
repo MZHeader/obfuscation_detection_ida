@@ -3,8 +3,7 @@
 > Port of [mrphrazer/obfuscation_detection](https://github.com/mrphrazer/obfuscation_detection)
 > by [Tim Blazytko](https://github.com/mrphrazer).
 
-Same idea as the original but for IDA Pro. Flagged functions get a
-repeatable comment saying why they were flagged. Findings tied to a specific instruction also get a comment on that line. Results also show up in a dockable table and get logged to the Output window.
+Same idea as the original but for IDA Pro. Flagged functions get a comment saying why they were flagged. Findings tied to a specific instruction also get a comment on that line. Results show up in a table and get logged to the Output window.
 
 ## What it looks for
 
@@ -52,8 +51,8 @@ the Output window.
 
 ## Usage 
 The plugin adds an entry under
-**Edit > Plugins > Obfuscation Detection**. Invoking it opens the dockable
-results table and pops a chooser listing every heuristic. Pick one to run
+**Edit > Plugins > Obfuscation Detection**. Launching it opens the dockable
+results table and a menu pops up listing every heuristic. Pick one to run
 and its findings populate the same table.
 
 ![Chooser dialog](imgs/chooser.png)
@@ -64,21 +63,9 @@ Cap** in the chooser adjusts the per-heuristic result cap (default 30).
 
 ![Results view](imgs/results.png)
 
-From the IDAPython console:
-
-```python
-from obfuscation_detection_ida import (
-    run_all,
-    run_heuristics,
-    run_utils,
-    find_state_machines,
-    find_xor_decryption_loops,
-)
-
-run_all()
-```
-
 Findings are added as a comment: `[obfdet] Heuristic: State Machine: ...`. 
+
+Comments can be mass-removed by selecting the `Clear all [obfdet] comments` option.
 
 ## Notes about the port
 
@@ -104,8 +91,3 @@ doesn't give you the same primitives:
 * Results view is a Qt dock; PySide6 / PySide2 / PyQt5 are tried in that
   order. Without any of them the plugin still tags functions and prints
   to the Output window.
-
-## Credit
-
-All the actual research and heuristics come from Tim Blazytko's original
-[obfuscation_detection](https://github.com/mrphrazer/obfuscation_detection).
