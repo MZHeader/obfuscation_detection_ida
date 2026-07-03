@@ -45,7 +45,7 @@ _SKIP_FUNC_FLAGS = ida_funcs.FUNC_LIB | ida_funcs.FUNC_THUNK
 # that you renamed by hand, is by definition either library code or already
 # understood. Set to False if you want to score everything (e.g. for a
 # non-malware binary where symbols are user code).
-SKIP_NAMED_FUNCTIONS = True
+SKIP_NAMED_FUNCTIONS = False
 
 # Prefixes IDA uses for its automatic per-address names. Anything starting
 # with one of these is treated as unnamed / unanalysed. Used as a fallback
@@ -91,6 +91,7 @@ def invalidate_function_cache():
     global _FUNCTION_LIST_CACHE
     _FUNCTION_GRAPH_CACHE.clear()
     _FUNCTION_LIST_CACHE = None
+    _NGRAM_CACHE.clear()
 
 
 def _build_function_graph(ea):
@@ -320,16 +321,45 @@ def _xor_instruction_info(ea):
         if op.type == ida_ua.o_imm:
             has_const = True
         size = max(size, _dtype_size(op.dtype))
+    const_value = None
+    if has_const:
+        for i in range(_UA_MAXOP):
+            op = insn.ops[i]
+            if op.type == ida_ua.o_void:
+                break
+            if op.type == ida_ua.o_imm:
+                const_value = op.value
+                break
     return {
         "has_const": has_const,
+        "const_value": const_value,
         "size": size,
         "op_reprs": op_reprs,
     }
 
 
+# Constants a real decryption stub would never use. All three families of
+# noise this rejects come up constantly on Go / Rust / C++ stdlib:
+#   * 0 is a no-op, 1 / -1 are boolean-flip and bitwise-NOT idioms
+#     (`xor eax, 1` after a conditional).
+#   * 2, 3 are small bit-flag toggles (`flags ^= EPOLLERR`).
+#   * 0xFFFF / 0xFFFFFFFF / 0xFFFF...FF are word/dword/qword full-width
+#     masks used in memcmp fast-paths and endian tricks.
+# Real byte or dword decryption keys are virtually always outside this set;
+# a genuine byte-mask decoder uses 0x80, 0xAA, 0x5A, etc. — never 1..3.
+_TRIVIAL_XOR_CONSTS = {
+    0, 1, 2, 3, -1,
+    0xFFFF, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
+}
+
+
 def _computes_xor_const(ea):
     info = _xor_instruction_info(ea)
-    return bool(info and info["has_const"])
+    if not (info and info["has_const"]):
+        return False
+    if info["const_value"] in _TRIVIAL_XOR_CONSTS:
+        return False
+    return True
 
 
 def _computes_rc4_xor(ea):
@@ -393,10 +423,50 @@ def find_rc4_ksa(function):
     return bool(rc4_ksa_sites(function))
 
 
+_STORE_MNEMS = {"mov", "movs", "movsb", "stosb", "stos"}
+
+
+def _has_byte_indexed_store(function):
+    """True if the function contains a byte-sized memory write with a
+    register-index component — i.e. `mov [reg + reg*scale + off], al/bl/...`
+    or `stosb`.
+
+    RC4 KSA fills a 256-byte S-box with `S[i] = i` (byte store). Regex bit-
+    state resets, hash-table inits, etc. all write DWORD/QWORD elements,
+    never bytes. So this filter cleanly separates RC4 candidates from
+    similarly-shaped Go/Rust/C++ container inits without hurting fidelity.
+
+    Only operand 0 (destination on x86 MOV) is checked, so we don't
+    misclassify byte LOADs like `movzx eax, byte ptr [rcx+rax]`.
+    """
+    for ea in function.instruction_addresses():
+        insn = ida_ua.insn_t()
+        if not ida_ua.decode_insn(insn, ea):
+            continue
+        mnem = insn.get_canon_mnem().lower()
+        if mnem == "stosb":
+            return True  # unconditional byte-store to [rdi]
+        if mnem not in _STORE_MNEMS:
+            continue
+        op = insn.ops[0]  # destination
+        if op.type not in (ida_ua.o_phrase, ida_ua.o_displ):
+            continue
+        if _dtype_size(op.dtype) != 1:
+            continue
+        if getattr(op, "specflag1", 0):  # SIB byte present → indexed
+            return True
+    return False
+
+
 def rc4_ksa_sites(function):
     """Return the addresses of instructions that carry the `0x100` immediate
     inside a function with exactly two natural loops. Empty list means no
     RC4 KSA candidate.
+
+    The function must also contain at least one byte-sized indexed memory
+    write — the S-box store. This filter kills the common shape-lookalike
+    (regex bit-state reset, hash-table inits) which have 2 loops and 256
+    immediates but store DWORDs/QWORDs, never bytes.
     """
     if compute_number_of_natural_loops(function) != 2:
         return []
@@ -409,6 +479,8 @@ def rc4_ksa_sites(function):
                 sites.append(ea)
                 break
     if len(sites) < _RC4_KSA_MIN_HITS:
+        return []
+    if not _has_byte_indexed_store(function):
         return []
     return sites
 
@@ -436,13 +508,26 @@ def opcode_at(ea):
     return m.replace(" ", "").lower()
 
 
+_NGRAM_CACHE = {}  # (function.start, n) -> Counter
+
+
+def invalidate_ngram_cache():
+    _NGRAM_CACHE.clear()
+
+
 def calc_ngrams(function, n):
+    key = (function.start, n)
+    cached = _NGRAM_CACHE.get(key)
+    if cached is not None:
+        return cached
     opcodes = []
     for ea in function.instruction_addresses():
         op = opcode_at(ea)
         if op:
             opcodes.append(op)
-    return Counter("".join(w) for w in sliding_window(opcodes, n))
+    counter = Counter("".join(w) for w in sliding_window(opcodes, n))
+    _NGRAM_CACHE[key] = counter
+    return counter
 
 
 def calc_global_ngrams(functions, n):
@@ -475,8 +560,15 @@ def compute_local_signature(block):
 
 
 def compute_context_signatures(function, num_iterations):
-    local_signatures = {b: compute_local_signature(b) for b in function.basic_blocks}
-    context_signatures = local_signatures.copy()
+    # Hash the raw local signatures up-front so every iteration works on
+    # fixed 32-char hex strings. Otherwise a function with a single
+    # 3000-instruction block (unrolled crypto) produces a multi-KB local
+    # signature that then gets concatenated across neighbours — memory grew
+    # multiplicatively per iteration on huge functions before this change.
+    context_signatures = {
+        b: md5(compute_local_signature(b).encode()).hexdigest()
+        for b in function.basic_blocks
+    }
     for _ in range(num_iterations):
         new_ctx = {}
         for b in function.basic_blocks:
@@ -525,16 +617,75 @@ def _init_mba_opsets():
     return True
 
 
-_MBA_MIN_BLOCKS = 3  # skip trivial functions to avoid decompiling everything
+# MBA (Hex-Rays microcode) heuristic can crash IDA. The crash happens inside
+# Hex-Rays' native C++ code (stkret / stack-return analysis on Go-produced
+# functions, non-standard ABIs, etc.) so Python try/except cannot catch it —
+# once it fires, IDA is gone. Defences in ascending order of severity:
+#
+#   * _MBA_MAX_BLOCKS         block-count ceiling. Real MBA crypto stays
+#                             under ~150 blocks even fully-inlined; anything
+#                             bigger is a switch dispatcher / goroutine
+#                             trampoline Hex-Rays occasionally chokes on.
+#   * MBA_SKIP_NAME_SUBSTRINGS names known to crash Hex-Rays on Go binaries.
+#   * MBA_CRASH_JOURNAL_PATH  file listing addresses that crashed IDA on a
+#                             previous run. Populate manually or by writing
+#                             the address printed just before the crash.
+#   * ENABLE_MBA_HEURISTIC    master kill-switch. Set OBFDET_NO_MBA=1 in
+#                             the env, or edit this file, to skip MBA
+#                             entirely for a binary known to crash it.
+import os as _os
+
+ENABLE_MBA_HEURISTIC = _os.environ.get("OBFDET_NO_MBA") is None
+
+_MBA_MIN_BLOCKS = 3    # skip trivial functions to avoid decompiling everything
+_MBA_MAX_BLOCKS = 200  # cap on function size handed to Hex-Rays; real MBA
+                       # crypto (SHA/AES fully-inlined) stays under ~150 blocks
+
+MBA_SKIP_NAME_SUBSTRINGS = (
+    # Go runtime pieces known to trip Hex-Rays stack-return analysis:
+    "runtime.reflectcall",
+    "runtime.duffcopy",
+    "runtime.duffzero",
+    "runtime.morestack",
+    "runtime.mcall",
+    "runtime.gogo",
+    "runtime.systemstack",
+    "runtime.asmcgocall",
+    "runtime.cgocallback",
+    "runtime.stackcheck",
+    "runtime_callbackasm",
+    "runtime.tstart",
+    "runtime.rt0_",
+    "type:.eq.",
+    "type..eq.",
+    ".deferwrap",
+    ".gowrap",
+    # Non-standard ABI trampolines the decompiler stumbles on:
+    "callbackasm",
+    "stdcall_trampoline",
+)
 
 
 def calculate_complex_arithmetic_expressions(function):
     """Count microcode instructions that mix arithmetic and boolean ops.
 
-    Requires Hex-Rays. Returns 0 if decompiler is unavailable or the function
-    is too small to plausibly host MBA.
+    Requires Hex-Rays. Returns 0 if the decompiler is unavailable, if the
+    function is outside the size band, if its name matches a known Hex-Rays
+    crasher, or if the master switch is off. Prints the address of every
+    function it's about to hand to Hex-Rays so that if IDA crashes, the
+    last printed address is a poison candidate to add to the skip list.
     """
-    if len(function.basic_blocks) < _MBA_MIN_BLOCKS:
+    if not ENABLE_MBA_HEURISTIC:
+        return 0
+    n_blocks = len(function.basic_blocks)
+    if n_blocks < _MBA_MIN_BLOCKS or n_blocks > _MBA_MAX_BLOCKS:
+        return 0
+    try:
+        import ida_funcs
+        name = ida_funcs.get_func_name(function.start) or ""
+    except Exception:
+        name = ""
+    if any(sub in name for sub in MBA_SKIP_NAME_SUBSTRINGS):
         return 0
     if not _init_mba_opsets():
         return 0
@@ -542,9 +693,20 @@ def calculate_complex_arithmetic_expressions(function):
         import ida_hexrays
     except ImportError:
         return 0
-    hf = ida_hexrays.hexrays_failure_t()
-    mbr = ida_hexrays.mba_ranges_t(function.func)
-    mba = ida_hexrays.gen_microcode(mbr, hf, None, ida_hexrays.DECOMP_NO_WAIT, ida_hexrays.MMAT_LVARS)
+    # Flush the address BEFORE the call. If Hex-Rays segfaults, this will be
+    # the last line in the log — telling the user which function to add to
+    # MBA_SKIP_NAME_SUBSTRINGS or which run to disable with OBFDET_NO_MBA.
+    import sys as _sys
+    print("[obfdet] MBA gen_microcode: 0x%x (%s) [%d blocks]" % (
+        function.start, name, n_blocks))
+    _sys.stdout.flush()
+    try:
+        hf = ida_hexrays.hexrays_failure_t()
+        mbr = ida_hexrays.mba_ranges_t(function.func)
+        mba = ida_hexrays.gen_microcode(mbr, hf, None, ida_hexrays.DECOMP_NO_WAIT, ida_hexrays.MMAT_LVARS)
+    except Exception as ex:
+        print("[obfdet] MBA gen_microcode failed at 0x%x: %s" % (function.start, ex))
+        return 0
     if mba is None:
         return 0
     counter = [0]
@@ -575,12 +737,16 @@ def calculate_complex_arithmetic_expressions(function):
         if uses_arith[0] and uses_bool[0]:
             counter[0] += 1
 
-    for i in range(mba.qty):
-        blk = mba.get_mblock(i)
-        cur = blk.head
-        while cur is not None:
-            visit_insn(cur)
-            cur = cur.next
+    try:
+        for i in range(mba.qty):
+            blk = mba.get_mblock(i)
+            cur = blk.head
+            while cur is not None:
+                visit_insn(cur)
+                cur = cur.next
+    except Exception as ex:
+        print("[obfdet] MBA walk failed at 0x%x: %s" % (function.start, ex))
+        return 0
     return counter[0]
 
 

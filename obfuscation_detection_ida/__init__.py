@@ -35,7 +35,10 @@ def run_heuristics():
     find_loop_frequency_functions()
     find_irreducible_loops()
     find_xor_decryption_loops()
-    find_complex_arithmetic_expressions()
+    # Complex Arithmetic Expression is disabled in run_all because Hex-Rays'
+    # gen_microcode() crashes IDA on some binaries (Go runtime, exotic ABIs).
+    # Run it individually from the chooser when you want it.
+    #   find_complex_arithmetic_expressions()
     find_duplicated_subgraphs()
     find_fragmented_functions()
 

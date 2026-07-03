@@ -127,6 +127,9 @@ MIN_DUPLICATE_SUBGRAPHS = 4              # 2-3 duplicates is call-site clusterin
                                          # not obfuscation
 MIN_MBA_INSTRUCTIONS = 5                 # a single mixed op is any normal xor/shift
 MIN_LEAF_INSTRUCTIONS = 20               # tiny leaves are helpers, not outlined code
+MAX_LEAF_CALLERS = 5                     # a leaf called 10+ times is a plain utility
+                                         # (memcpy-like helper), not an outlined stub
+                                         # or trampoline
 MIN_ENTRY_INSTRUCTIONS = 5               # ditto for uncalled entry-like fragments
 MIN_FRAGMENTATION_RATIO = 8              # ratio of blocks to cyclomatic complexity
                                          # (normal code is ~1-3; block splitting
@@ -413,6 +416,7 @@ def find_leaf_function_reports():
         for f in _functions()
         if len(callees_of(f)) == 0
         and _instruction_count(f) >= MIN_LEAF_INSTRUCTIONS
+        and len(callers_of(f)) <= MAX_LEAF_CALLERS
         and not _has_any_data_ref(f)
     ]
 

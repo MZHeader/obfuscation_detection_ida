@@ -50,7 +50,7 @@ PLUGIN_VERSION = "1.0"
 # (label, callable, tooltip)
 _ACTIONS = [
     ("Show Results View", show_results_view, "Open the dockable table of all findings"),
-    ("All heuristics + utils", run_all, "Run every heuristic and utility"),
+    ("All heuristics + utils (excl. MBA)", run_all, "MBA excluded; run separately"),
     ("State Machine", find_state_machines, "Detect state machines / control-flow flattening"),
     ("Complex Function", find_complex_functions, "Rank functions by cyclomatic complexity"),
     ("Large Basic Block", find_large_basic_blocks, "Functions with unusually large basic blocks"),
@@ -60,7 +60,9 @@ _ACTIONS = [
     ("Loop Frequency", find_loop_frequency_functions, "Functions with many natural loops"),
     ("Irreducible Loop", find_irreducible_loops, "Functions containing irreducible loops"),
     ("XOR Decryption Loop", find_xor_decryption_loops, "Loops that XOR by a constant"),
-    ("Complex Arithmetic Expression", find_complex_arithmetic_expressions, "Mixed-boolean-arithmetic (Hex-Rays required)"),
+    ("Complex Arithmetic Expression (slow, may crash)",
+     find_complex_arithmetic_expressions,
+     "MBA via Hex-Rays. Slow; can crash on Go binaries."),
     ("Duplicate Subgraph", find_duplicated_subgraphs, "Repeated CFG substructures"),
     ("Fragmented Function", find_fragmented_functions, "Basic-block-splitting obfuscation (high blocks-per-branch)"),
     ("Utils: Entry Function", find_entry_functions, "Functions without callers"),
