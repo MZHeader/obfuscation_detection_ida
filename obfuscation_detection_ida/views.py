@@ -1,11 +1,11 @@
 """Dockable Qt-backed results table.
 
-The view accumulates findings across every heuristic invocation in a
-session. Double-clicking a row jumps IDA to that function or instruction.
+One row per function; each row aggregates every heuristic that fired on it.
+Double-clicking a row jumps IDA to that function.
 
 The Qt bindings shipping with IDA differ across versions (PyQt5 on 7.x/8.x,
 PySide6 on 9.x). We try each import in order and disable the view if
-neither is available — the plugin still tags functions and prints to the
+neither is available; the plugin still tags functions and prints to the
 Output window in that case.
 """
 
@@ -29,7 +29,7 @@ for _mod in ("PySide6", "PySide2", "PyQt5"):
         continue
 
 
-_COLUMNS = ("Hits", "Heuristic", "Function", "Address", "Score", "Sites")
+_COLUMNS = ("Hits", "Heuristics", "Function", "Address", "Scores", "Sites")
 
 _SCORE_UNITS = {
     "state_machine_score": "flatness",
@@ -44,6 +44,8 @@ _SCORE_UNITS = {
     "fragmentation_ratio": "blocks/branch",
 }
 
+_TAG_PREFIX = "Heuristic: "
+
 _INSTANCE = None
 
 
@@ -51,11 +53,6 @@ _SORT_ROLE = None
 
 
 def _make_numeric_item_class():
-    """Lazily build a QTableWidgetItem subclass with a numeric __lt__.
-
-    Sort key lives in Qt.UserRole+1. Rows without a numeric key fall back to
-    string comparison so partially-populated columns still sort sensibly.
-    """
     global _SORT_ROLE
     if _SORT_ROLE is None:
         _SORT_ROLE = _QtCore.Qt.UserRole + 1
@@ -89,14 +86,34 @@ def _numeric_item(display_text, sort_value):
     return item
 
 
+def _short_tag(tag_type):
+    if tag_type.startswith(_TAG_PREFIX):
+        return tag_type[len(_TAG_PREFIX):]
+    return tag_type
+
+
+def _score_display(finding, extra_key):
+    if not extra_key or extra_key not in finding:
+        return ""
+    raw = finding[extra_key]
+    if isinstance(raw, float):
+        value_text = "%.3f" % raw
+    elif isinstance(raw, int):
+        value_text = str(raw)
+    else:
+        value_text = str(raw)
+    unit = _SCORE_UNITS.get(extra_key, "")
+    return ("%s %s" % (value_text, unit)).strip()
+
+
 class _ResultsForm(ida_kernwin.PluginForm):
-    """Dockable widget listing every finding produced this session."""
+    """Dockable widget listing every function that fired any heuristic."""
 
     def __init__(self):
         super(_ResultsForm, self).__init__()
         self._parent = None
         self._table = None
-        self._rows = []
+        self._rows_by_ea = {}
 
     def OnCreate(self, form):
         if not _QT_OK:
@@ -130,45 +147,47 @@ class _ResultsForm(ida_kernwin.PluginForm):
         self._parent = None
         self._table = None
 
-    def _hits_for(self, ea):
-        return len({r["heuristic"] for r in self._rows if r["ea"] == ea})
-
-    def _refresh_hits_column(self, ea):
-        if self._table is None:
-            return
-        count = self._hits_for(ea)
-        for r in range(self._table.rowCount()):
-            addr_item = self._table.item(r, 3)
-            if addr_item is None:
-                continue
-            if addr_item.data(_QtCore.Qt.UserRole) == ea:
-                hits_item = _numeric_item(str(count), count)
-                self._table.setItem(r, 0, hits_item)
-
     def _repopulate(self):
         if self._table is None:
             return
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
-        for row in self._rows:
+        for row in self._rows_by_ea.values():
             self._append_row(row)
         self._table.setSortingEnabled(True)
         self._table.sortByColumn(0, _QtCore.Qt.DescendingOrder)
 
+    def _find_visual_row(self, ea):
+        for r in range(self._table.rowCount()):
+            addr_item = self._table.item(r, 3)
+            if addr_item is None:
+                continue
+            if addr_item.data(_QtCore.Qt.UserRole) == ea:
+                return r
+        return -1
+
     def _append_row(self, row):
         r = self._table.rowCount()
         self._table.insertRow(r)
+        self._write_row_cells(r, row)
 
-        hits = self._hits_for(row["ea"])
+    def _write_row_cells(self, r, row):
+        hits = len(row["findings"])
+        heurs = ", ".join(sorted(_short_tag(t) for t in row["findings"].keys()))
+        scores = " | ".join(
+            "%s=%s" % (_short_tag(t), d["score_display"])
+            for t, d in sorted(row["findings"].items())
+            if d.get("score_display")
+        )
+        total_sites = sum(d.get("sites_count", 0) for d in row["findings"].values())
+
         hits_item = _numeric_item(str(hits), hits)
-        heur_item = _QtWidgets.QTableWidgetItem(row["heuristic"])
+        heur_item = _QtWidgets.QTableWidgetItem(heurs)
         name_item = _QtWidgets.QTableWidgetItem(row["name"])
         addr_item = _numeric_item(row["address"], row["ea"])
         addr_item.setData(_QtCore.Qt.UserRole, row["ea"])
-        score_item = _numeric_item(row["score_display"], row["score_sort"])
-        sites_item = _numeric_item(row["sites_display"], row["sites_sort"])
-        if row.get("first_anchor") is not None:
-            sites_item.setData(_QtCore.Qt.UserRole, row["first_anchor"])
+        score_item = _QtWidgets.QTableWidgetItem(scores)
+        sites_item = _numeric_item(str(total_sites) if total_sites else "", total_sites)
 
         self._table.setItem(r, 0, hits_item)
         self._table.setItem(r, 1, heur_item)
@@ -177,64 +196,72 @@ class _ResultsForm(ida_kernwin.PluginForm):
         self._table.setItem(r, 4, score_item)
         self._table.setItem(r, 5, sites_item)
 
+    def _refresh_row(self, ea):
+        if self._table is None:
+            return
+        row = self._rows_by_ea.get(ea)
+        r = self._find_visual_row(ea)
+        if row is None:
+            if r >= 0:
+                self._table.removeRow(r)
+            return
+        if r < 0:
+            self._append_row(row)
+        else:
+            self._write_row_cells(r, row)
+
     def _on_double_click(self, index):
-        col = index.column()
-        item = self._table.item(index.row(), col)
-        ea = item.data(_QtCore.Qt.UserRole) if item is not None else None
-        if ea is None:
-            ea_item = self._table.item(index.row(), 3)
-            ea = ea_item.data(_QtCore.Qt.UserRole) if ea_item is not None else None
+        addr_item = self._table.item(index.row(), 3)
+        ea = addr_item.data(_QtCore.Qt.UserRole) if addr_item is not None else None
         if ea is not None:
             ida_kernwin.jumpto(int(ea))
 
-
     def add_finding(self, finding, tag_type, extra_key=None):
+        address = finding.get("address")
+        if not address:
+            return
+        ea = int(address, 16)
         anchors = list(finding.get("anchor_addresses", []) or [])
-        score_display = ""
-        score_sort = None
-        if extra_key and extra_key in finding:
-            raw = finding[extra_key]
-            if isinstance(raw, float):
-                value_text = "%.3f" % raw
-                score_sort = raw
-            elif isinstance(raw, int):
-                value_text = str(raw)
-                score_sort = raw
-            else:
-                value_text = str(raw)
-                try:
-                    score_sort = float(raw)
-                except (TypeError, ValueError):
-                    score_sort = None
-            unit = _SCORE_UNITS.get(extra_key, "")
-            score_display = ("%s %s" % (value_text, unit)).strip()
-        row = {
-            "heuristic": tag_type,
-            "name": finding.get("name", ""),
-            "address": finding.get("address", ""),
-            "ea": int(finding["address"], 16) if finding.get("address") else 0,
-            "score_display": score_display,
-            "score_sort": score_sort,
-            "sites_display": str(len(anchors)) if anchors else "",
-            "sites_sort": len(anchors) if anchors else 0,
+        detail = {
+            "score_display": _score_display(finding, extra_key),
+            "sites_count": len(anchors),
             "first_anchor": anchors[0] if anchors else None,
         }
-        self._rows.append(row)
+        row = self._rows_by_ea.get(ea)
+        if row is None:
+            row = {
+                "ea": ea,
+                "address": address,
+                "name": finding.get("name", ""),
+                "findings": {},
+            }
+            self._rows_by_ea[ea] = row
+        else:
+            if not row["name"] and finding.get("name"):
+                row["name"] = finding["name"]
+        row["findings"][tag_type] = detail
+
         if self._table is not None:
             self._table.setSortingEnabled(False)
-            self._append_row(row)
-            self._refresh_hits_column(row["ea"])
+            self._refresh_row(ea)
             self._table.setSortingEnabled(True)
 
     def clear_heuristic(self, tag_type):
-        affected = {r["ea"] for r in self._rows if r["heuristic"] == tag_type}
-        self._rows = [r for r in self._rows if r["heuristic"] != tag_type]
-        self._repopulate()
+        affected = []
+        for ea, row in list(self._rows_by_ea.items()):
+            if tag_type in row["findings"]:
+                del row["findings"][tag_type]
+                if not row["findings"]:
+                    del self._rows_by_ea[ea]
+                affected.append(ea)
+        if self._table is None:
+            return
+        self._table.setSortingEnabled(False)
         for ea in affected:
-            self._refresh_hits_column(ea)
+            self._refresh_row(ea)
+        self._table.setSortingEnabled(True)
 
     def begin_batch(self, tag_type):
-        """Drop prior findings for `tag_type` so the view mirrors a fresh run."""
         self.clear_heuristic(tag_type)
 
     def end_batch(self):
@@ -243,7 +270,6 @@ class _ResultsForm(ida_kernwin.PluginForm):
 
 
 def show():
-    """Open (or focus) the results dock."""
     if not _QT_OK:
         print("[obfdet] Results View unavailable: no Qt bindings found.")
         return None
@@ -255,9 +281,4 @@ def show():
 
 
 def results_view():
-    """Return the live view (if the user has opened it), else None.
-
-    Heuristics call this to record findings; if the view isn't open we
-    return None so `_apply` skips the append cheaply.
-    """
     return _INSTANCE
