@@ -53,7 +53,7 @@ the Output window.
 ## Usage 
 The plugin adds an entry under
 **Edit > Plugins > Obfuscation Detection**. Invoking it opens the dockable
-results table and pops a chooser listing every heuristic — pick one to run
+results table and pops a chooser listing every heuristic. Pick one to run
 and its findings populate the same table.
 
 ![Chooser dialog](imgs/chooser.png)
