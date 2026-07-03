@@ -36,6 +36,48 @@ _COLUMNS = ("Heuristic", "Function", "Address", "Score", "Sites")
 _INSTANCE = None
 
 
+_SORT_ROLE = None  # populated once Qt is loaded
+
+
+def _make_numeric_item_class():
+    """Lazily build a QTableWidgetItem subclass with a numeric __lt__.
+
+    Sort key lives in Qt.UserRole+1. Rows without a numeric key fall back to
+    string comparison so partially-populated columns still sort sensibly.
+    """
+    global _SORT_ROLE
+    if _SORT_ROLE is None:
+        _SORT_ROLE = _QtCore.Qt.UserRole + 1
+
+    class _NumericItem(_QtWidgets.QTableWidgetItem):
+        def __lt__(self, other):
+            a = self.data(_SORT_ROLE)
+            b = other.data(_SORT_ROLE) if isinstance(other, _QtWidgets.QTableWidgetItem) else None
+            if a is not None and b is not None:
+                try:
+                    return float(a) < float(b)
+                except (TypeError, ValueError):
+                    pass
+            return self.text() < (other.text() if hasattr(other, "text") else "")
+
+    return _NumericItem
+
+
+_NUMERIC_ITEM_CLASS = None
+
+
+def _numeric_item(display_text, sort_value):
+    global _NUMERIC_ITEM_CLASS
+    if not _QT_OK:
+        return None
+    if _NUMERIC_ITEM_CLASS is None:
+        _NUMERIC_ITEM_CLASS = _make_numeric_item_class()
+    item = _NUMERIC_ITEM_CLASS(display_text)
+    if sort_value is not None:
+        item.setData(_SORT_ROLE, float(sort_value))
+    return item
+
+
 class _ResultsForm(ida_kernwin.PluginForm):
     """Dockable widget listing every finding produced this session."""
 
@@ -88,20 +130,21 @@ class _ResultsForm(ida_kernwin.PluginForm):
     def _append_row(self, row):
         r = self._table.rowCount()
         self._table.insertRow(r)
-        cells = [
-            row["heuristic"],
-            row["name"],
-            row["address"],
-            row["score"],
-            row["sites"],
-        ]
-        for c, text in enumerate(cells):
-            item = _QtWidgets.QTableWidgetItem(text)
-            if c == 2:
-                item.setData(_QtCore.Qt.UserRole, row["ea"])
-            elif c == 4 and row.get("first_anchor") is not None:
-                item.setData(_QtCore.Qt.UserRole, row["first_anchor"])
-            self._table.setItem(r, c, item)
+
+        heur_item = _QtWidgets.QTableWidgetItem(row["heuristic"])
+        name_item = _QtWidgets.QTableWidgetItem(row["name"])
+        addr_item = _numeric_item(row["address"], row["ea"])
+        addr_item.setData(_QtCore.Qt.UserRole, row["ea"])
+        score_item = _numeric_item(row["score_display"], row["score_sort"])
+        sites_item = _numeric_item(row["sites_display"], row["sites_sort"])
+        if row.get("first_anchor") is not None:
+            sites_item.setData(_QtCore.Qt.UserRole, row["first_anchor"])
+
+        self._table.setItem(r, 0, heur_item)
+        self._table.setItem(r, 1, name_item)
+        self._table.setItem(r, 2, addr_item)
+        self._table.setItem(r, 3, score_item)
+        self._table.setItem(r, 4, sites_item)
 
     def _on_double_click(self, index):
         col = index.column()
@@ -118,16 +161,31 @@ class _ResultsForm(ida_kernwin.PluginForm):
 
     def add_finding(self, finding, tag_type, extra_key=None):
         anchors = list(finding.get("anchor_addresses", []) or [])
-        score = ""
+        score_display = ""
+        score_sort = None
         if extra_key and extra_key in finding:
-            score = str(finding[extra_key])
+            raw = finding[extra_key]
+            if isinstance(raw, float):
+                score_display = "%.3f" % raw
+                score_sort = raw
+            elif isinstance(raw, int):
+                score_display = str(raw)
+                score_sort = raw
+            else:
+                score_display = str(raw)
+                try:
+                    score_sort = float(raw)
+                except (TypeError, ValueError):
+                    score_sort = None
         row = {
             "heuristic": tag_type,
             "name": finding.get("name", ""),
             "address": finding.get("address", ""),
             "ea": int(finding["address"], 16) if finding.get("address") else 0,
-            "score": score,
-            "sites": str(len(anchors)) if anchors else "",
+            "score_display": score_display,
+            "score_sort": score_sort,
+            "sites_display": str(len(anchors)) if anchors else "",
+            "sites_sort": len(anchors) if anchors else 0,
             "first_anchor": anchors[0] if anchors else None,
         }
         self._rows.append(row)
