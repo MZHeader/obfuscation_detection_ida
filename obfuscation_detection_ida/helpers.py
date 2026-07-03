@@ -218,15 +218,32 @@ def callees_of(function):
 
 _MIN_DISPATCHER_SUCCESSORS = 3
 
+# Signature thresholds for the compiler-emitted binary-tree-cascade shape
+# of CFF (Emotet's state dispatchers, where a switch got compiled as
+# `if(r>K) ... else if(r>L) ...` chains). We require BOTH many natural
+# loops AND many back-edges into a single dispatcher head — a normal
+# nested-loops function scatters back-edges across many heads (one per
+# loop level), whereas CFF funnels every state case back to the same
+# dispatcher block.
+_CFF_CASCADE_MIN_LOOPS = 10
+_CFF_CASCADE_MIN_BACKEDGES = 5
+
 
 def calc_state_machine_score(function):
     """Score a function's resemblance to a dispatcher-driven state machine.
 
-    A plain `while` loop trivially matches "some block dominates most of the
-    function and has a back-edge", so we additionally require the candidate
-    dominator to have at least `_MIN_DISPATCHER_SUCCESSORS` outgoing edges.
-    Real control-flow flattening dispatchers fan out to many state blocks;
-    ordinary loops only branch two ways (body + exit).
+    Two families of dispatcher are recognised:
+
+    1. Jump-table switch: some block has >= `_MIN_DISPATCHER_SUCCESSORS`
+       outgoing edges and dominates most of the CFG (with a back-edge from
+       within its dominated set). Ordinary while-loops branch only two ways
+       (body / exit); real jump tables fan out much wider.
+    2. Binary-comparison cascade: no single block has that fanout because
+       the compiler emitted the switch as `if r>K ... else if r>L ...`
+       (Emotet's C2 dispatchers look like this). Detect it by a block that
+       dominates most of the CFG combined with a high natural-loop count
+       (one back-edge per state case). Simple while-loops have 1-2 loops;
+       CFF cascades have dozens.
     """
     total = len(function.basic_blocks)
     if total == 0:
@@ -237,6 +254,29 @@ def calc_state_machine_score(function):
             continue
         dominated = function.dominated_by(block)
         if not any(edge.source in dominated for edge in block.incoming_edges):
+            continue
+        score = max(score, len(dominated) / total)
+    if score > 0:
+        return score
+
+    # Cascade fallback: no wide-fanout dispatcher found. Check for the CFF
+    # cascade signature — dominator with many back-edges from within its
+    # dominated set (state cases all funnelling back to one head) AND the
+    # function has many natural loops overall.
+    n_loops = compute_number_of_natural_loops(function)
+    if n_loops < _CFF_CASCADE_MIN_LOOPS:
+        return 0.0
+    for block in function.basic_blocks:
+        # Skip trivial single-successor prolog / entry blocks; the real
+        # cascade head has at least a 2-way test.
+        if len(block.successors) < 2:
+            continue
+        dominated = function.dominated_by(block)
+        back_edges = 0
+        for edge in block.incoming_edges:
+            if edge.source in dominated:
+                back_edges += 1
+        if back_edges < _CFF_CASCADE_MIN_BACKEDGES:
             continue
         score = max(score, len(dominated) / total)
     return score
