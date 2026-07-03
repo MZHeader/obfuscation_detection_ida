@@ -29,7 +29,7 @@ for _mod in ("PySide6", "PySide2", "PyQt5"):
         continue
 
 
-_COLUMNS = ("Heuristic", "Function", "Address", "Score", "Sites")
+_COLUMNS = ("Hits", "Heuristic", "Function", "Address", "Score", "Sites")
 
 _SCORE_UNITS = {
     "state_machine_score": "flatness",
@@ -118,6 +118,7 @@ class _ResultsForm(ida_kernwin.PluginForm):
         self._table.setSelectionBehavior(_QtWidgets.QAbstractItemView.SelectRows)
         self._table.setEditTriggers(_QtWidgets.QAbstractItemView.NoEditTriggers)
         self._table.setSortingEnabled(True)
+        self._table.sortByColumn(0, _QtCore.Qt.DescendingOrder)
         header = self._table.horizontalHeader()
         header.setStretchLastSection(True)
         header.setSectionResizeMode(_QtWidgets.QHeaderView.Interactive)
@@ -130,6 +131,21 @@ class _ResultsForm(ida_kernwin.PluginForm):
         self._parent = None
         self._table = None
 
+    def _hits_for(self, ea):
+        return len({r["heuristic"] for r in self._rows if r["ea"] == ea})
+
+    def _refresh_hits_column(self, ea):
+        if self._table is None:
+            return
+        count = self._hits_for(ea)
+        for r in range(self._table.rowCount()):
+            addr_item = self._table.item(r, 3)
+            if addr_item is None:
+                continue
+            if addr_item.data(_QtCore.Qt.UserRole) == ea:
+                hits_item = _numeric_item(str(count), count)
+                self._table.setItem(r, 0, hits_item)
+
     def _repopulate(self):
         if self._table is None:
             return
@@ -141,6 +157,8 @@ class _ResultsForm(ida_kernwin.PluginForm):
         r = self._table.rowCount()
         self._table.insertRow(r)
 
+        hits = self._hits_for(row["ea"])
+        hits_item = _numeric_item(str(hits), hits)
         heur_item = _QtWidgets.QTableWidgetItem(row["heuristic"])
         name_item = _QtWidgets.QTableWidgetItem(row["name"])
         addr_item = _numeric_item(row["address"], row["ea"])
@@ -150,18 +168,19 @@ class _ResultsForm(ida_kernwin.PluginForm):
         if row.get("first_anchor") is not None:
             sites_item.setData(_QtCore.Qt.UserRole, row["first_anchor"])
 
-        self._table.setItem(r, 0, heur_item)
-        self._table.setItem(r, 1, name_item)
-        self._table.setItem(r, 2, addr_item)
-        self._table.setItem(r, 3, score_item)
-        self._table.setItem(r, 4, sites_item)
+        self._table.setItem(r, 0, hits_item)
+        self._table.setItem(r, 1, heur_item)
+        self._table.setItem(r, 2, name_item)
+        self._table.setItem(r, 3, addr_item)
+        self._table.setItem(r, 4, score_item)
+        self._table.setItem(r, 5, sites_item)
 
     def _on_double_click(self, index):
         col = index.column()
         item = self._table.item(index.row(), col)
         ea = item.data(_QtCore.Qt.UserRole) if item is not None else None
         if ea is None:
-            ea_item = self._table.item(index.row(), 2)
+            ea_item = self._table.item(index.row(), 3)
             ea = ea_item.data(_QtCore.Qt.UserRole) if ea_item is not None else None
         if ea is not None:
             ida_kernwin.jumpto(int(ea))
@@ -202,11 +221,15 @@ class _ResultsForm(ida_kernwin.PluginForm):
         if self._table is not None:
             self._table.setSortingEnabled(False)
             self._append_row(row)
+            self._refresh_hits_column(row["ea"])
             self._table.setSortingEnabled(True)
 
     def clear_heuristic(self, tag_type):
+        affected = {r["ea"] for r in self._rows if r["heuristic"] == tag_type}
         self._rows = [r for r in self._rows if r["heuristic"] != tag_type]
         self._repopulate()
+        for ea in affected:
+            self._refresh_hits_column(ea)
 
     def begin_batch(self, tag_type):
         """Drop prior findings for `tag_type` so the view mirrors a fresh run."""
