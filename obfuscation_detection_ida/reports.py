@@ -97,7 +97,7 @@ def _functions():
 # the score gates below, a very large binary can leave dozens of "top decile"
 # hits per heuristic; we truncate to the highest-scoring N so the results
 # view stays reviewable.
-MAX_FINDINGS_PER_HEURISTIC = 15
+MAX_FINDINGS_PER_HEURISTIC = 30
 
 # Minimum absolute score a function needs to keep after the top-10% ranking.
 # Real obfuscation samples score much higher than "top decile of an ordinary
