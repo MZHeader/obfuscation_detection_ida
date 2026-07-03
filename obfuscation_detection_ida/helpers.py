@@ -220,13 +220,17 @@ _MIN_DISPATCHER_SUCCESSORS = 3
 
 # Signature thresholds for the compiler-emitted binary-tree-cascade shape
 # of CFF (Emotet's state dispatchers, where a switch got compiled as
-# `if(r>K) ... else if(r>L) ...` chains). We require BOTH many natural
-# loops AND many back-edges into a single dispatcher head — a normal
-# nested-loops function scatters back-edges across many heads (one per
-# loop level), whereas CFF funnels every state case back to the same
-# dispatcher block.
+# `if(r>K) ... else if(r>L) ...` chains). Real CFF has three properties:
+#   * many natural loops (one back-edge per state case)
+#   * many back-edges into a SINGLE dispatcher head (state cases all
+#     funnel back)
+#   * many duplicated subgraphs (cloned state-transition handlers)
+# The duplicate-subgraph requirement is what separates CFF cascades from
+# ordinary parser loops (`while (tok = next()) switch (tok) { ... }`),
+# which also have many back-edges to one head but distinct case bodies.
 _CFF_CASCADE_MIN_LOOPS = 10
 _CFF_CASCADE_MIN_BACKEDGES = 5
+_CFF_CASCADE_MIN_DUPLICATES = 10
 
 
 def calc_state_machine_score(function):
@@ -261,10 +265,15 @@ def calc_state_machine_score(function):
 
     # Cascade fallback: no wide-fanout dispatcher found. Check for the CFF
     # cascade signature — dominator with many back-edges from within its
-    # dominated set (state cases all funnelling back to one head) AND the
-    # function has many natural loops overall.
+    # dominated set (state cases all funnelling back to one head), many
+    # natural loops overall, AND many duplicated subgraphs. Without the
+    # duplicate-subgraph check we would also fire on ordinary parsers
+    # (`while (tok = next()) switch (tok) { ... }`) which structurally
+    # look like cascades but have distinct case bodies.
     n_loops = compute_number_of_natural_loops(function)
     if n_loops < _CFF_CASCADE_MIN_LOOPS:
+        return 0.0
+    if count_context_signature_duplicates(function) < _CFF_CASCADE_MIN_DUPLICATES:
         return 0.0
     for block in function.basic_blocks:
         # Skip trivial single-successor prolog / entry blocks; the real
