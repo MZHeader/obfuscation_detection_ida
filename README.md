@@ -60,7 +60,10 @@ heuristic (including "All heuristics + utils" and "Show Results View").
 ## Using it
 
 Click **Edit > Plugins > Obfuscation Detection**, then double-click a
-heuristic in the picker. Open **Show Results View** once at the start of a
+heuristic in the picker.
+
+![Chooser dialog](imgs/chooser.png)
+ Open **Show Results View** once at the start of a
 session to get a dockable table that accumulates findings as you go;
 double-clicking a row jumps IDA to that address.
 
