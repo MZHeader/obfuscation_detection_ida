@@ -52,12 +52,15 @@ the Output window.
 
 ## Usage 
 The plugin adds an entry under
-**Edit > Plugins > Obfuscation Detection** that opens a menu with every
-heuristic.
+**Edit > Plugins > Obfuscation Detection**. Invoking it opens the dockable
+results table and pops a chooser listing every heuristic — pick one to run
+and its findings populate the same table.
 
 ![Chooser dialog](imgs/chooser.png)
 
-Open **Show Results View** once at the start of a session to get a dockable table that accumulates findings as you go. One row per function, sorted by how many heuristics fired. Double-clicking a row jumps to that function.
+The results table has one row per function, sorted by how many heuristics
+fired. Double-clicking a row jumps to that function. **Configure: Findings
+Cap** in the chooser adjusts the per-heuristic result cap (default 30).
 
 ![Results view](imgs/results.png)
 
