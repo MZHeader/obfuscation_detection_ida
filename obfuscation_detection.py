@@ -108,7 +108,10 @@ def _unregister_actions():
 
 
 class ObfuscationDetectionPlugin(ida_idaapi.plugin_t):
-    flags = ida_idaapi.PLUGIN_KEEP
+    # PLUGIN_HIDE stops IDA from auto-adding an "Obfuscation Detection" leaf
+    # under Edit > Plugins that would otherwise fire run() and block us from
+    # attaching a real submenu at the same path.
+    flags = ida_idaapi.PLUGIN_HIDE | ida_idaapi.PLUGIN_FIX
     comment = "Automatically detect obfuscated code and other interesting constructs"
     help = "See README.md"
     wanted_name = PLUGIN_NAME
@@ -120,7 +123,6 @@ class ObfuscationDetectionPlugin(ida_idaapi.plugin_t):
         return ida_idaapi.PLUGIN_KEEP
 
     def run(self, arg):
-        # If invoked directly (Edit > Plugins > Obfuscation Detection), run all.
         run_all()
 
     def term(self):
