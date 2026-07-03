@@ -4,12 +4,12 @@
 > by [Tim Blazytko](https://github.com/mrphrazer). Original targets Binary Ninja;
 > a Ghidra version lives at [mrphrazer/obfuscation_detection_ghidra](https://github.com/mrphrazer/obfuscation_detection_ghidra).
 
-Same idea as the original: run a bunch of heuristics that tend to light up
-on obfuscated, packed, or crypto-heavy binaries. Matched functions get a
-repeatable comment tagging why they were flagged, findings that pinpoint
-a specific instruction get annotated on that line in both the disassembly
-and Hex-Rays pseudocode, overlapping instructions get highlighted, and
-everything is dumped to the Output window.
+Same idea as the original: run a pile of heuristics that tend to light up
+on obfuscated, packed, or crypto-heavy binaries. Flagged functions get a
+repeatable comment saying why. Findings tied to a specific instruction
+also get a comment on that line, and Hex-Rays picks it up on the matching
+pseudocode statement. Overlapping instructions are highlighted, and
+everything is printed to the Output window.
 
 ## What it looks for
 
@@ -81,18 +81,18 @@ from obfuscation_detection_ida import (
 run_all()
 ```
 
-Function-level findings are appended to the function's repeatable comment
-as lines like `[obfdet] Heuristic: State Machine: ...`. Findings that
-pinpoint a specific instruction (XOR loops, RC4 KSA/PRGA constants,
-overlapping bytes) also drop a matching comment on that exact line, which
-Hex-Rays shows on the corresponding pseudocode statement. Everything is
-grep-friendly, survives IDB saves, and re-running a heuristic replaces its
-prior comment instead of stacking duplicates.
+Function-level findings go into the function's repeatable comment as
+lines like `[obfdet] Heuristic: State Machine: ...`. Findings tied to a
+specific instruction (XOR loops, RC4 KSA/PRGA constants, overlapping
+bytes) also drop a matching comment on that exact line, and Hex-Rays
+shows it on the corresponding pseudocode statement. Comments are
+grep-friendly and survive IDB saves. Re-running a heuristic replaces its
+previous comment instead of stacking duplicates.
 
 ## Notes about the port
 
-A few things differ from the Binary Ninja original because IDA's SDK doesn't
-expose the same primitives:
+A few things differ from the Binary Ninja original because IDA's SDK
+doesn't give you the same primitives:
 
 * No first-class tag types in IDA. Findings go into the function's
   repeatable comment (and the per-instruction disasm/pseudocode comment
