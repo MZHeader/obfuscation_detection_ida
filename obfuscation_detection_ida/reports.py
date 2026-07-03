@@ -109,7 +109,11 @@ MIN_STATE_MACHINE_BLOCKS = 20            # need a real CFG, not a 4-block stub
 MIN_CYCLOMATIC_COMPLEXITY = 50           # ordinary code rarely reaches 50+
 MIN_COMPLEX_FUNCTION_BLOCKS = 20
 MIN_AVG_BLOCK_INSTRUCTIONS = 40          # crypto / unrolled code territory
-MIN_LARGE_BLOCK_BLOCKS = 3               # single-block functions don't count
+MIN_LARGE_BLOCK_BLOCKS = 1               # a single 800-instruction block is
+                                         # exactly what this heuristic should
+                                         # catch (fully-unrolled MD5, AES,
+                                         # SHA, custom crypto). Excluding
+                                         # them was a real miss.
 MIN_UNCOMMON_SEQ_SCORE = 0.85            # 0.75 still catches hex parsers,
                                          # whitespace tokenizers, string trim;
                                          # 0.85+ isolates crypto/hash-shaped code
