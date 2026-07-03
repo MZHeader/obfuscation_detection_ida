@@ -12,15 +12,15 @@ Heuristics:
 * State machines / control-flow flattening
 * High cyclomatic complexity
 * Unusually large basic blocks
-* Overlapping instructions (bytes disassembled two different ways)
-* Rare 3-gram opcode sequences vs reference tables for x86, x86_64, ARM, AArch64
-* Popular helpers (things called from lots of places, common for string decrypt)
+* Overlapping instructions
+* Rare 3-gram opcode sequences
+* Popular helpers
 * Functions with many natural loops
 * Irreducible loops
 * XOR-by-constant inside a loop
-* Mixed boolean-arithmetic (needs Hex-Rays; excluded from `run_all` since it can crash IDA on some binaries)
+* Mixed boolean-arithmetic
 * Repeated CFG subgraphs
-* Basic-block-splitting (high blocks-per-branch ratio)
+* Basic-block-splitting
 
 Utilities:
 
@@ -72,22 +72,23 @@ Comments can be mass-removed by selecting the `Clear all [obfdet] comments` opti
 A few things differ from the Binary Ninja original because IDA's SDK
 doesn't give you the same primitives:
 
-* No first-class tag types in IDA. Findings are added as a comment, prefixed with `[obfdet]`.
+* IDA has no first-class tag types. Findings land in function and
+  instruction comments, prefixed with `[obfdet]`.
 * Dominators, dominance frontiers, and back-edge detection are computed
-  by the plugin (Cooper-Harvey-Kennedy). IDA's `FlowChart` doesn't hand
-  those to you.
-* XOR-in-loop and RC4 PRGA detection run on assembly mnemonics rather than
-  a lifted IL, since IDA has no LLIL equivalent that's usable without the
-  decompiler. Common `xor`/`eor` patterns are caught. XOR expressed via
-  lifted arithmetic is not.
+  inside the plugin (Cooper-Harvey-Kennedy). IDA's `FlowChart` doesn't
+  give you any of that.
+* XOR-in-loop and RC4 PRGA detection walk assembly mnemonics rather than
+  a lifted IL. IDA has no LLIL equivalent that works without the
+  decompiler, so plain `xor` / `eor` patterns get caught but anything
+  hidden inside a lifted arithmetic identity does not.
 * Mixed-boolean-arithmetic detection uses Hex-Rays microcode at
-  `MMAT_LVARS`. If the decompiler isn't installed the heuristic returns 0
-  for every function rather than blowing up. Absolute counts aren't
-  comparable to the Binary Ninja HLIL-based scores, but the ranking is.
-* The uncommon-instruction-sequence heuristic only runs on x86, x86_64,
-  ARM, and AArch64. Other architectures are skipped with a message
-  instead of falling through to the LLIL n-gram database (which we can't
-  compute in IDA).
-* Results view is a Qt dock; PySide6 / PySide2 / PyQt5 are tried in that
-  order. Without any of them the plugin still tags functions and prints
-  to the Output window.
+  `MMAT_LVARS`. Without Hex-Rays it prints a warning and skips the
+  heuristic. `gen_microcode` has crashed IDA on some Go binaries during
+  testing, so MBA is left out of `run_all`; run it on its own from the
+  chooser when you want it.
+* Uncommon-instruction-sequence only runs on x86, x86_64, ARM, and
+  AArch64. Other architectures get a "no n-gram table" message and are
+  skipped rather than falling through to something meaningless.
+* The results dock tries PySide6, then PySide2, then PyQt5. If none of
+  them import, the plugin still tags functions and logs to the Output
+  window; only the dock is unavailable.
