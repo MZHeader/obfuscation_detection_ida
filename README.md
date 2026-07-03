@@ -76,6 +76,37 @@ Comments can be mass-removed by selecting the `Clear all [obfdet] comments` opti
 
 ## Notes about the port
 
+### 1. Tuned defaults
+
+The scoring formulas match upstream but every heuristic carries a
+minimum threshold, so noisy or borderline hits don't reach the results
+table. In upstream every heuristic reports its top ~10% unconditionally;
+here you get the top 30 that also clear a floor. Concretely:
+
+* Cyclomatic complexity needs `>= 50` and `>= 20` blocks
+* Average instructions per block needs `>= 40`
+* Duplicate subgraphs need `>= 4` copies
+* Uncommon 3-gram score needs `>= 0.85` over `>= 30` sequences
+* Loop count needs `>= 5`
+* MBA needs `>= 5` mixed instructions and the function must sit in a
+  3-200 block band; Go/Rust runtime shims that crash `gen_microcode` are
+  skipped by name
+* State-machine detection requires a `>= 3`-way dispatcher inside a
+  loop, with a separate path for binary-comparison flattening cascades
+* XOR-in-loop skips trivial constants (0, +/-1, all-Fs, sign-bit masks,
+  and the 25-31-bit bignum limb masks used in constant-time compares),
+  and drops any constant that appears in `>= 3` functions across the
+  binary (compile-time magic, not a decryption key)
+* Popular helpers only surface if they also contain a XOR decryption
+  loop, aimed at string decryptors and API-hash resolvers rather than
+  `printf`-shaped hot calls
+* Library and thunk functions are skipped before scoring
+* RC4 KSA/PRGA candidates require both the `0x100` initialisation and
+  an S-box byte lookup inside a natural loop, which drops most AES /
+  HMAC / `memcmp` false positives
+
+### 2. SDK differences
+
 A few things differ from the Binary Ninja original because IDA's SDK
 doesn't give you the same primitives:
 
