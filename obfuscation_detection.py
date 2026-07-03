@@ -38,8 +38,21 @@ from obfuscation_detection_ida import (
     find_xor_decryption_loops,
     run_all,
 )
+from obfuscation_detection_ida import reports as _reports
 from obfuscation_detection_ida.helpers import invalidate_function_cache
 from obfuscation_detection_ida.views import show as show_results_view
+
+
+def _configure_findings_cap():
+    current = _reports.MAX_FINDINGS_PER_HEURISTIC
+    value = ida_kernwin.ask_long(current, "Max findings per heuristic (current: %d)" % current)
+    if value is None:
+        return
+    if value < 1:
+        print("[obfdet] cap must be >= 1; keeping %d" % current)
+        return
+    _reports.MAX_FINDINGS_PER_HEURISTIC = int(value)
+    print("[obfdet] findings cap set to %d" % value)
 
 
 PLUGIN_NAME = "Obfuscation Detection"
@@ -49,6 +62,7 @@ PLUGIN_VERSION = "1.0"
 
 _ACTIONS = [
     ("Show Results View", show_results_view, "Open the dockable table of all findings"),
+    ("Configure: Findings Cap", _configure_findings_cap, "Set max findings per heuristic (default 30)"),
     ("All heuristics + utils (excl. MBA)", run_all, "MBA excluded; run separately"),
     ("State Machine", find_state_machines, "Detect state machines / control-flow flattening"),
     ("Complex Function", find_complex_functions, "Rank functions by cyclomatic complexity"),
@@ -96,7 +110,7 @@ def _open_chooser():
     if idx < 0:
         return
     label, fn, _ = _ACTIONS[idx]
-    if fn is not show_results_view:
+    if fn not in (show_results_view, _configure_findings_cap):
         invalidate_function_cache()
     try:
         fn()
