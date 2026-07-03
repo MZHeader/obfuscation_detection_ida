@@ -1,8 +1,8 @@
 # Obfuscation Detection for IDA Pro
 
-Port of Tim Blazytko's [obfuscation_detection](https://github.com/mrphrazer/obfuscation_detection)
-plugin (originally for Binary Ninja) to IDA Pro. A Ghidra version also lives
-at [mrphrazer/obfuscation_detection_ghidra](https://github.com/mrphrazer/obfuscation_detection_ghidra).
+> Port of [mrphrazer/obfuscation_detection](https://github.com/mrphrazer/obfuscation_detection)
+> by [Tim Blazytko](https://github.com/mrphrazer). Original targets Binary Ninja;
+> a Ghidra version lives at [mrphrazer/obfuscation_detection_ghidra](https://github.com/mrphrazer/obfuscation_detection_ghidra).
 
 Same idea as the original: run a bunch of heuristics that tend to light up
 on obfuscated, packed, or crypto-heavy binaries. Matched functions get a
