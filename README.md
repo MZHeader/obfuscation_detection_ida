@@ -3,16 +3,16 @@
 > Port of [mrphrazer/obfuscation_detection](https://github.com/mrphrazer/obfuscation_detection)
 > by [Tim Blazytko](https://github.com/mrphrazer).
 
-Same idea as the original but for IDA Pro. Flagged functions get a comment saying why they were flagged. Findings tied to a specific instruction also get a comment on that line. Results show up in a table and get logged to the Output window.
+Same idea as the original but for IDA Pro. The plugin flags functions
+whose shape suggests something interesting is going on: obfuscated
+control flow, state machines and protocol dispatchers, C2 communication,
+string or code decryption stubs, and hand-rolled cryptography. Each
+heuristic scores on a different signal; the results table ranks by how
+many independent heuristics hit the same function, so real obfuscation
+floats above one-off matches. Findings also land in function comments
+and get logged to the Output window.
 
 ## What it looks for
-
-The plugin flags functions whose shape suggests something interesting is
-going on: obfuscated control flow, state machines and protocol
-dispatchers, C2 communication, string or code decryption stubs, and
-hand-rolled cryptography. Each heuristic scores functions on a different
-signal, and the results table ranks by how many independent heuristics
-hit the same function, so real obfuscation floats above one-off matches.
 
 Heuristics:
 
