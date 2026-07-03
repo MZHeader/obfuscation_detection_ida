@@ -31,6 +31,7 @@ TAG_RC4_PRGA = "Heuristic: RC4 PRGA"
 TAG_RECURSIVE_FUNCTION = "Heuristic: Recursive Function"
 TAG_UNCOMMON_INSTRUCTION_SEQUENCE = "Heuristic: Uncommon Instruction Sequence"
 TAG_XOR_DECRYPTION_LOOP = "Heuristic: XOR Decryption Loop"
+TAG_FRAGMENTED_FUNCTION = "Heuristic: Fragmented Function"
 
 TAG_DESC_COMPLEX_ARITHMETIC_EXPRESSION = "num_mba_instructions: {score} | may indicate: mixed-boolean-arithmetic obfuscation, crypto"
 TAG_DESC_COMPLEX_FUNCTION = "cyclomatic_complexity: {score} | may indicate: complex protocols, state machines, opaque predicates"
@@ -48,6 +49,7 @@ TAG_DESC_RC4_PRGA = "may indicate: RC4 pseudo-random generation"
 TAG_DESC_RECURSIVE_FUNCTION = "self-recursive | may indicate: recursion, obfuscation"
 TAG_DESC_UNCOMMON_INSTRUCTION_SEQUENCE = "uncommon_sequences_score: {score} | may indicate: crypto, arithmetic obfuscation"
 TAG_DESC_XOR_DECRYPTION_LOOP = "may indicate: string decryption, code decryption stubs"
+TAG_DESC_FRAGMENTED_FUNCTION = "blocks_per_branch: {score:.1f} | may indicate: basic-block-splitting obfuscation, junk-code insertion"
 
 _TAG_MARKER = "[obfdet]"
 

@@ -10,6 +10,7 @@ from .reports import (
     find_complex_arithmetic_expression_reports,
     find_complex_function_reports,
     find_duplicate_subgraph_reports,
+    find_fragmented_function_reports,
     find_instruction_overlapping_reports,
     find_irreducible_loop_reports,
     find_large_basic_block_reports,
@@ -31,6 +32,7 @@ from .tagging import (
     TAG_STATE_MACHINE,
     TAG_UNCOMMON_INSTRUCTION_SEQUENCE,
     TAG_XOR_DECRYPTION_LOOP,
+    TAG_FRAGMENTED_FUNCTION,
     annotate_ea,
     clear_heuristic_tags,
     tag_function,
@@ -131,3 +133,8 @@ def find_loop_frequency_functions():
 def find_irreducible_loops():
     _print_banner("Irreducible Loop")
     _apply(find_irreducible_loop_reports(), TAG_IRREDUCIBLE_LOOP, "num_irreducible_loops")
+
+
+def find_fragmented_functions():
+    _print_banner("Fragmented Function")
+    _apply(find_fragmented_function_reports(), TAG_FRAGMENTED_FUNCTION, "fragmentation_ratio")

@@ -156,12 +156,21 @@ def iter_functions():
 
 
 def callers_of(function):
-    """Set of function start eas that call `function`."""
+    """Set of caller identities for `function`.
+
+    Each caller is a function start ea when the calling site sits inside a
+    known function, or the raw source ea when it sits in code IDA hasn't
+    associated with any function (common in obfuscated binaries: thunks and
+    stubs that jmp to a dispatcher often live outside function boundaries).
+    """
     result = set()
     for xref in idautils.XrefsTo(function.start, 0):
         if xref.iscode and xref.type in (ida_xref.fl_CN, ida_xref.fl_CF, ida_xref.fl_JN, ida_xref.fl_JF):
             f = ida_funcs.get_func(xref.frm)
-            if f is not None and f.start_ea != function.start:
+            if f is None:
+                # orphan caller (code outside any function). Still a caller.
+                result.add(xref.frm)
+            elif f.start_ea != function.start:
                 result.add(f.start_ea)
     return result
 
@@ -187,6 +196,9 @@ def callees_of(function):
                     callee = ida_funcs.get_func(xref.to)
                     if callee is not None:
                         result.add(callee.start_ea)
+                    else:
+                        # call into orphan code (packer stub, shellcode, etc.)
+                        result.add(xref.to)
                 elif xref.type in _JUMP_XREF_TYPES:
                     callee = ida_funcs.get_func(xref.to)
                     if (
@@ -244,6 +256,24 @@ def calc_average_instructions_per_block(function):
     num_blocks = max(1, len(function.basic_blocks))
     num_instructions = sum(b.instruction_count for b in function.basic_blocks)
     return num_instructions / num_blocks
+
+
+def calc_fragmentation_ratio(function):
+    """Ratio of basic-block count to cyclomatic complexity.
+
+    Well-structured code has ratio close to 1 (each block reflects real
+    branching). Block-splitting obfuscation produces many tiny blocks
+    connected by unconditional jumps, driving the ratio way up: e.g. 990
+    blocks / cc 18 = 55. That means most "blocks" carry no branching
+    information — they exist purely to shatter the linear flow.
+
+    Returns 0 for tiny functions to avoid scoring noise.
+    """
+    num_blocks = len(function.basic_blocks)
+    if num_blocks < 3:
+        return 0.0
+    cc = max(1, calc_cyclomatic_complexity(function))
+    return num_blocks / cc
 
 
 # ---------------------------------------------------------------------------

@@ -46,6 +46,7 @@ _SCORE_UNITS = {
     "num_irreducible_loops": "irreducible loops",
     "num_duplicate_subgraphs": "duplicates",
     "num_mba_instructions": "MBA ops",
+    "fragmentation_ratio": "blocks/branch",
 }
 
 _INSTANCE = None

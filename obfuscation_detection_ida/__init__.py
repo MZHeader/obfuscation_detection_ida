@@ -6,6 +6,7 @@ from .heuristics import (
     find_complex_arithmetic_expressions,
     find_complex_functions,
     find_duplicated_subgraphs,
+    find_fragmented_functions,
     find_instruction_overlapping,
     find_irreducible_loops,
     find_large_basic_blocks,
@@ -36,6 +37,7 @@ def run_heuristics():
     find_xor_decryption_loops()
     find_complex_arithmetic_expressions()
     find_duplicated_subgraphs()
+    find_fragmented_functions()
 
 
 def run_utils():

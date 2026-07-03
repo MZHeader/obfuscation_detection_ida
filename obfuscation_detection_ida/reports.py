@@ -7,6 +7,7 @@ from math import ceil
 from .helpers import (
     calc_average_instructions_per_block,
     calc_cyclomatic_complexity,
+    calc_fragmentation_ratio,
     calc_state_machine_score,
     calc_uncommon_instruction_sequences_score,
     calculate_complex_arithmetic_expressions,
@@ -45,6 +46,7 @@ from .tagging import (
     TAG_STATE_MACHINE,
     TAG_UNCOMMON_INSTRUCTION_SEQUENCE,
     TAG_XOR_DECRYPTION_LOOP,
+    TAG_FRAGMENTED_FUNCTION,
     TAG_DESC_COMPLEX_ARITHMETIC_EXPRESSION,
     TAG_DESC_COMPLEX_FUNCTION,
     TAG_DESC_DUPLICATE_SUBGRAPH,
@@ -61,6 +63,7 @@ from .tagging import (
     TAG_DESC_STATE_MACHINE,
     TAG_DESC_UNCOMMON_INSTRUCTION_SEQUENCE,
     TAG_DESC_XOR_DECRYPTION_LOOP,
+    TAG_DESC_FRAGMENTED_FUNCTION,
 )
 
 
@@ -120,6 +123,11 @@ MIN_DUPLICATE_SUBGRAPHS = 4              # 2-3 duplicates is call-site clusterin
 MIN_MBA_INSTRUCTIONS = 5                 # a single mixed op is any normal xor/shift
 MIN_LEAF_INSTRUCTIONS = 20               # tiny leaves are helpers, not outlined code
 MIN_ENTRY_INSTRUCTIONS = 5               # ditto for uncalled entry-like fragments
+MIN_FRAGMENTATION_RATIO = 8              # ratio of blocks to cyclomatic complexity
+                                         # (normal code is ~1-3; block splitting
+                                         # pushes it to double digits)
+MIN_FRAGMENTATION_BLOCKS = 50            # skip small functions where the ratio
+                                         # isn't statistically meaningful
 
 
 def _cap(findings, key=None):
@@ -328,6 +336,24 @@ def find_loop_frequency_reports():
     return _cap(findings)
 
 
+def find_fragmented_function_reports():
+    """Functions with an abnormally high basic-block-count vs. cyclomatic
+    complexity ratio — the signature of block-splitting obfuscation."""
+    findings = [
+        function_finding(
+            f,
+            TAG_FRAGMENTED_FUNCTION,
+            TAG_DESC_FRAGMENTED_FUNCTION.format(score=score),
+            fragmentation_ratio=score,
+            block_count=len(f.basic_blocks),
+        )
+        for f, score in get_top_10_functions(_functions(), calc_fragmentation_ratio)
+        if _above(score, MIN_FRAGMENTATION_RATIO)
+        and _has_blocks(f, MIN_FRAGMENTATION_BLOCKS)
+    ]
+    return _cap(findings)
+
+
 def find_irreducible_loop_reports():
     findings = [
         function_finding(
@@ -350,12 +376,29 @@ def _instruction_count(function):
     return sum(1 for _ in function.instruction_addresses())
 
 
+def _has_any_data_ref(function):
+    """True if any data reference targets the function start.
+
+    In obfuscated binaries most functions with "no callers" turn out to be
+    vtable / dispatch-table members: something like `mov ecx, offset f`
+    stores their address for later indirect call. Those aren't hidden entry
+    points; they're just called through a pointer. A truly interesting
+    Entry Function is orphan in *both* code and data — likely shellcode or
+    dead-code-fragment.
+    """
+    import idautils
+    for _ in idautils.DataRefsTo(function.start):
+        return True
+    return False
+
+
 def find_entry_function_reports():
     return [
         function_finding(f, TAG_ENTRY_FUNCTION, TAG_DESC_ENTRY_FUNCTION)
         for f in _functions()
         if len(callers_of(f)) == 0
         and _instruction_count(f) >= MIN_ENTRY_INSTRUCTIONS
+        and not _has_any_data_ref(f)
     ]
 
 
