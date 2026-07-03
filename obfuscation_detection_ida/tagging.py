@@ -158,40 +158,68 @@ def clear_ea_annotation(ea, tag_type):
             pass
 
 
+_REVIEWED_MARKER = "[obfdet-reviewed]"
+
+
+def clear_obfdet_for_function(ea):
+    """Strip [obfdet] lines from one function and its instruction comments.
+    Preserves the [obfdet-reviewed] marker. Returns (func_cleaned, eas_cleaned)."""
+    import idautils
+    func = ida_funcs.get_func(ea)
+    if func is None:
+        return 0, 0
+    func_cleaned = 0
+    existing = idc.get_func_cmt(ea, 1) or ""
+    if _TAG_MARKER in existing:
+        remaining = [l for l in existing.splitlines() if not l.startswith(_TAG_MARKER)]
+        idc.set_func_cmt(ea, "\n".join(remaining), 1)
+        func_cleaned = 1
+    eas_cleaned = 0
+    for head in idautils.Heads(func.start_ea, func.end_ea):
+        cmt = idc.get_cmt(head, 0) or ""
+        if _TAG_MARKER not in cmt:
+            continue
+        remaining = [l for l in cmt.splitlines() if not l.startswith(_TAG_MARKER)]
+        idc.set_cmt(head, "\n".join(remaining), 0)
+        eas_cleaned += 1
+        if _HAS_HEXRAYS:
+            try:
+                cfunc = ida_hexrays.decompile(func)
+                if cfunc is not None:
+                    tl = ida_hexrays.treeloc_t()
+                    tl.ea = head
+                    tl.itp = ida_hexrays.ITP_SEMI
+                    cfunc.set_user_cmt(tl, "")
+                    cfunc.save_user_cmts()
+            except Exception:
+                pass
+    return func_cleaned, eas_cleaned
+
+
 def clear_all_obfdet_tags():
-    """Strip every [obfdet] line from every function comment, disasm comment,
-    and pseudocode comment in the IDB. Returns (functions_cleaned, eas_cleaned)."""
+    """Strip every [obfdet] line from every function in the IDB. Returns
+    (functions_cleaned, eas_cleaned)."""
     import idautils
     funcs_cleaned = 0
     eas_cleaned = 0
     for ea in idautils.Functions():
-        existing = idc.get_func_cmt(ea, 1) or ""
-        if _TAG_MARKER in existing:
-            remaining = [l for l in existing.splitlines() if not l.startswith(_TAG_MARKER)]
-            idc.set_func_cmt(ea, "\n".join(remaining), 1)
-            funcs_cleaned += 1
-        func = ida_funcs.get_func(ea)
-        if func is None:
-            continue
-        for head in idautils.Heads(func.start_ea, func.end_ea):
-            cmt = idc.get_cmt(head, 0) or ""
-            if _TAG_MARKER not in cmt:
-                continue
-            remaining = [l for l in cmt.splitlines() if not l.startswith(_TAG_MARKER)]
-            idc.set_cmt(head, "\n".join(remaining), 0)
-            eas_cleaned += 1
-            if _HAS_HEXRAYS:
-                try:
-                    cfunc = ida_hexrays.decompile(func)
-                    if cfunc is not None:
-                        tl = ida_hexrays.treeloc_t()
-                        tl.ea = head
-                        tl.itp = ida_hexrays.ITP_SEMI
-                        cfunc.set_user_cmt(tl, "")
-                        cfunc.save_user_cmts()
-                except Exception:
-                    pass
+        f, e = clear_obfdet_for_function(ea)
+        funcs_cleaned += f
+        eas_cleaned += e
     return funcs_cleaned, eas_cleaned
+
+
+def is_function_reviewed(ea):
+    cmt = idc.get_func_cmt(ea, 1) or ""
+    return any(l.strip() == _REVIEWED_MARKER for l in cmt.splitlines())
+
+
+def set_function_reviewed(ea, on):
+    cmt = idc.get_func_cmt(ea, 1) or ""
+    lines = [l for l in cmt.splitlines() if l.strip() != _REVIEWED_MARKER]
+    if on:
+        lines.append(_REVIEWED_MARKER)
+    idc.set_func_cmt(ea, "\n".join(lines), 1)
 
 
 def clear_heuristic_tags(function_iter, tag_type):

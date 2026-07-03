@@ -1,7 +1,11 @@
 """Dockable Qt-backed results table.
 
 One row per function; each row aggregates every heuristic that fired on it.
-Double-clicking a row jumps IDA to that function.
+Double-clicking a row jumps IDA to that function. The leftmost column is a
+"reviewed" checkbox: ticking a row dulls it out and persists the state via
+a `[obfdet-reviewed]` line in the function's repeatable comment. The
+"Clear comments on ticked rows" button strips every `[obfdet]` line from
+those functions and drops the rows.
 
 The Qt bindings shipping with IDA differ across versions (PyQt5 on 7.x/8.x,
 PySide6 on 9.x). We try each import in order and disable the view if
@@ -13,23 +17,31 @@ import ida_kernwin
 
 _QT_OK = False
 _QtCore = None
+_QtGui = None
 _QtWidgets = None
 
 for _mod in ("PySide6", "PySide2", "PyQt5"):
     try:
         if _mod == "PySide6":
-            from PySide6 import QtCore as _QtCore, QtWidgets as _QtWidgets
+            from PySide6 import QtCore as _QtCore, QtGui as _QtGui, QtWidgets as _QtWidgets
         elif _mod == "PySide2":
-            from PySide2 import QtCore as _QtCore, QtWidgets as _QtWidgets
+            from PySide2 import QtCore as _QtCore, QtGui as _QtGui, QtWidgets as _QtWidgets
         else:
-            from PyQt5 import QtCore as _QtCore, QtWidgets as _QtWidgets
+            from PyQt5 import QtCore as _QtCore, QtGui as _QtGui, QtWidgets as _QtWidgets
         _QT_OK = True
         break
     except ImportError:
         continue
 
 
-_COLUMNS = ("Hits", "Heuristics", "Function", "Address", "Scores", "Sites")
+_COLUMNS = ("Done", "Hits", "Heuristics", "Function", "Address", "Scores", "Sites")
+_COL_DONE = 0
+_COL_HITS = 1
+_COL_HEURS = 2
+_COL_NAME = 3
+_COL_ADDR = 4
+_COL_SCORES = 5
+_COL_SITES = 6
 
 _SCORE_UNITS = {
     "state_machine_score": "flatness",
@@ -114,6 +126,7 @@ class _ResultsForm(ida_kernwin.PluginForm):
         self._parent = None
         self._table = None
         self._rows_by_ea = {}
+        self._suppress_changes = False
 
     def OnCreate(self, form):
         if not _QT_OK:
@@ -139,7 +152,13 @@ class _ResultsForm(ida_kernwin.PluginForm):
         header.setStretchLastSection(True)
         header.setSectionResizeMode(_QtWidgets.QHeaderView.Interactive)
         self._table.doubleClicked.connect(self._on_double_click)
+        self._table.itemChanged.connect(self._on_item_changed)
         layout.addWidget(self._table)
+
+        self._clear_btn = _QtWidgets.QPushButton("Clear comments on ticked rows", self._parent)
+        self._clear_btn.clicked.connect(self._on_clear_ticked)
+        layout.addWidget(self._clear_btn)
+
         self._parent.setLayout(layout)
         self._repopulate()
 
@@ -150,16 +169,18 @@ class _ResultsForm(ida_kernwin.PluginForm):
     def _repopulate(self):
         if self._table is None:
             return
+        self._suppress_changes = True
         self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
         for row in self._rows_by_ea.values():
             self._append_row(row)
         self._table.setSortingEnabled(True)
-        self._table.sortByColumn(0, _QtCore.Qt.DescendingOrder)
+        self._table.sortByColumn(_COL_HITS, _QtCore.Qt.DescendingOrder)
+        self._suppress_changes = False
 
     def _find_visual_row(self, ea):
         for r in range(self._table.rowCount()):
-            addr_item = self._table.item(r, 3)
+            addr_item = self._table.item(r, _COL_ADDR)
             if addr_item is None:
                 continue
             if addr_item.data(_QtCore.Qt.UserRole) == ea:
@@ -172,6 +193,7 @@ class _ResultsForm(ida_kernwin.PluginForm):
         self._write_row_cells(r, row)
 
     def _write_row_cells(self, r, row):
+        self._suppress_changes = True
         hits = len(row["findings"])
         heurs = ", ".join(sorted(_short_tag(t) for t in row["findings"].keys()))
         scores = " | ".join(
@@ -181,6 +203,9 @@ class _ResultsForm(ida_kernwin.PluginForm):
         )
         total_sites = sum(d.get("sites_count", 0) for d in row["findings"].values())
 
+        done_item = _QtWidgets.QTableWidgetItem()
+        done_item.setFlags(_QtCore.Qt.ItemIsSelectable | _QtCore.Qt.ItemIsEnabled | _QtCore.Qt.ItemIsUserCheckable)
+        done_item.setCheckState(_QtCore.Qt.Checked if row.get("reviewed") else _QtCore.Qt.Unchecked)
         hits_item = _numeric_item(str(hits), hits)
         heur_item = _QtWidgets.QTableWidgetItem(heurs)
         name_item = _QtWidgets.QTableWidgetItem(row["name"])
@@ -189,12 +214,23 @@ class _ResultsForm(ida_kernwin.PluginForm):
         score_item = _QtWidgets.QTableWidgetItem(scores)
         sites_item = _numeric_item(str(total_sites) if total_sites else "", total_sites)
 
-        self._table.setItem(r, 0, hits_item)
-        self._table.setItem(r, 1, heur_item)
-        self._table.setItem(r, 2, name_item)
-        self._table.setItem(r, 3, addr_item)
-        self._table.setItem(r, 4, score_item)
-        self._table.setItem(r, 5, sites_item)
+        self._table.setItem(r, _COL_DONE, done_item)
+        self._table.setItem(r, _COL_HITS, hits_item)
+        self._table.setItem(r, _COL_HEURS, heur_item)
+        self._table.setItem(r, _COL_NAME, name_item)
+        self._table.setItem(r, _COL_ADDR, addr_item)
+        self._table.setItem(r, _COL_SCORES, score_item)
+        self._table.setItem(r, _COL_SITES, sites_item)
+
+        self._apply_dulling(r, bool(row.get("reviewed")))
+        self._suppress_changes = False
+
+    def _apply_dulling(self, r, reviewed):
+        brush = _QtGui.QBrush(_QtGui.QColor(140, 140, 140)) if reviewed else _QtGui.QBrush()
+        for c in range(self._table.columnCount()):
+            item = self._table.item(r, c)
+            if item is not None:
+                item.setForeground(brush)
 
     def _refresh_row(self, ea):
         if self._table is None:
@@ -211,10 +247,43 @@ class _ResultsForm(ida_kernwin.PluginForm):
             self._write_row_cells(r, row)
 
     def _on_double_click(self, index):
-        addr_item = self._table.item(index.row(), 3)
+        if index.column() == _COL_DONE:
+            return
+        addr_item = self._table.item(index.row(), _COL_ADDR)
         ea = addr_item.data(_QtCore.Qt.UserRole) if addr_item is not None else None
         if ea is not None:
             ida_kernwin.jumpto(int(ea))
+
+    def _on_item_changed(self, item):
+        if self._suppress_changes or item.column() != _COL_DONE:
+            return
+        r = item.row()
+        addr_item = self._table.item(r, _COL_ADDR)
+        if addr_item is None:
+            return
+        ea = addr_item.data(_QtCore.Qt.UserRole)
+        if ea is None:
+            return
+        reviewed = item.checkState() == _QtCore.Qt.Checked
+        row = self._rows_by_ea.get(int(ea))
+        if row is not None:
+            row["reviewed"] = reviewed
+        from obfuscation_detection_ida.tagging import set_function_reviewed
+        set_function_reviewed(int(ea), reviewed)
+        self._apply_dulling(r, reviewed)
+
+    def _on_clear_ticked(self):
+        from obfuscation_detection_ida.tagging import clear_obfdet_for_function, set_function_reviewed
+        ticked = [ea for ea, row in self._rows_by_ea.items() if row.get("reviewed")]
+        if not ticked:
+            print("[obfdet] no rows ticked")
+            return
+        for ea in ticked:
+            clear_obfdet_for_function(ea)
+            set_function_reviewed(ea, False)
+            self._rows_by_ea.pop(ea, None)
+        self._repopulate()
+        print("[obfdet] cleared comments on %d ticked function(s)" % len(ticked))
 
     def add_finding(self, finding, tag_type, extra_key=None):
         address = finding.get("address")
@@ -229,11 +298,13 @@ class _ResultsForm(ida_kernwin.PluginForm):
         }
         row = self._rows_by_ea.get(ea)
         if row is None:
+            from obfuscation_detection_ida.tagging import is_function_reviewed
             row = {
                 "ea": ea,
                 "address": address,
                 "name": finding.get("name", ""),
                 "findings": {},
+                "reviewed": is_function_reviewed(ea),
             }
             self._rows_by_ea[ea] = row
         else:
@@ -264,9 +335,11 @@ class _ResultsForm(ida_kernwin.PluginForm):
     def clear_all(self):
         self._rows_by_ea = {}
         if self._table is not None:
+            self._suppress_changes = True
             self._table.setSortingEnabled(False)
             self._table.setRowCount(0)
             self._table.setSortingEnabled(True)
+            self._suppress_changes = False
 
     def begin_batch(self, tag_type):
         self.clear_heuristic(tag_type)
