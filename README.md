@@ -57,7 +57,9 @@ heuristic.
 
 ![Chooser dialog](imgs/chooser.png)
 
-Open **Show Results View** once at the start of a session to get a dockable table that accumulates findings as you go. Double-clicking a row will take you to that function.
+Open **Show Results View** once at the start of a session to get a dockable table that accumulates findings as you go. One row per function, sorted by how many heuristics fired. Double-clicking a row jumps to that function.
+
+![Results view](imgs/results.png)
 
 From the IDAPython console:
 
