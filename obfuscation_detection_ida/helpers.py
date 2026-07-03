@@ -348,6 +348,17 @@ def _iter_immediates(ea):
             yield op.value
 
 
+# RC4 KSA is compact — a huge function that happens to have two loops and a
+# 256-byte allocation somewhere is almost never doing key scheduling. Real
+# implementations fit within a few dozen blocks.
+_RC4_KSA_MAX_BLOCKS = 50
+
+# Real RC4 KSA references 0x100 at least twice: as the S-box init loop bound
+# and again in the permutation loop bound. A lone 0x100 (stack allocation,
+# ASCII/unicode threshold, single loop cap) doesn't qualify.
+_RC4_KSA_MIN_HITS = 2
+
+
 def find_rc4_ksa(function):
     return bool(rc4_ksa_sites(function))
 
@@ -359,12 +370,16 @@ def rc4_ksa_sites(function):
     """
     if compute_number_of_natural_loops(function) != 2:
         return []
+    if len(function.basic_blocks) > _RC4_KSA_MAX_BLOCKS:
+        return []
     sites = []
     for ea in function.instruction_addresses():
         for c in _iter_immediates(ea):
             if c == 0x100:
                 sites.append(ea)
                 break
+    if len(sites) < _RC4_KSA_MIN_HITS:
+        return []
     return sites
 
 

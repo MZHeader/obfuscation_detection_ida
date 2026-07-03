@@ -107,8 +107,12 @@ MIN_CYCLOMATIC_COMPLEXITY = 50           # ordinary code rarely reaches 50+
 MIN_COMPLEX_FUNCTION_BLOCKS = 20
 MIN_AVG_BLOCK_INSTRUCTIONS = 40          # crypto / unrolled code territory
 MIN_LARGE_BLOCK_BLOCKS = 3               # single-block functions don't count
-MIN_UNCOMMON_SEQ_SCORE = 0.60            # >=60% of 3-grams unseen in reference
+MIN_UNCOMMON_SEQ_SCORE = 0.75            # 0.6-0.7 catches parsers/tokenizers;
+                                         # 0.75+ isolates crypto-shaped code
 MIN_CALLERS = 30                         # library-tier helpers, not "used twice"
+MOST_CALLED_REQUIRE_XOR_LOOP = True      # only tag popular helpers if they also
+                                         # look like decoders; otherwise "many
+                                         # callers" catches every utility
 MIN_LOOPS = 5                            # 1-4 loops is routine
 MIN_IRREDUCIBLE_LOOPS = 1                # already guarded; kept for symmetry
 MIN_DUPLICATE_SUBGRAPHS = 4              # 2-3 duplicates is call-site clustering,
@@ -253,6 +257,13 @@ def find_uncommon_instruction_sequence_reports():
 
 
 def find_most_called_function_reports():
+    def _keep(f, score):
+        if not _above(score, MIN_CALLERS):
+            return False
+        if MOST_CALLED_REQUIRE_XOR_LOOP and not contains_xor_decryption_loop(f):
+            return False
+        return True
+
     findings = [
         function_finding(
             f,
@@ -263,7 +274,7 @@ def find_most_called_function_reports():
         for f, score in get_top_10_functions(
             _functions(), lambda f: len(callers_of(f))
         )
-        if _above(score, MIN_CALLERS)
+        if _keep(f, score)
     ]
     return _cap(findings)
 
