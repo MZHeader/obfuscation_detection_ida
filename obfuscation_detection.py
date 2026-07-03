@@ -40,7 +40,18 @@ from obfuscation_detection_ida import (
 )
 from obfuscation_detection_ida import reports as _reports
 from obfuscation_detection_ida.helpers import invalidate_function_cache
-from obfuscation_detection_ida.views import show as show_results_view
+from obfuscation_detection_ida.tagging import clear_all_obfdet_tags
+from obfuscation_detection_ida.views import results_view, show as show_results_view
+
+
+def _clear_all_tags():
+    if ida_kernwin.ask_yn(0, "Remove every [obfdet] comment from this IDB?") != 1:
+        return
+    funcs, eas = clear_all_obfdet_tags()
+    view = results_view()
+    if view is not None:
+        view.clear_all()
+    print("[obfdet] cleared %d function comments and %d instruction annotations" % (funcs, eas))
 
 
 def _configure_findings_cap():
@@ -63,6 +74,7 @@ PLUGIN_VERSION = "1.0"
 _ACTIONS = [
     ("All heuristics + utils (excl. MBA)", run_all, "MBA excluded; run separately"),
     ("Configure: Findings Cap", _configure_findings_cap, "Set max findings per heuristic (default 30)"),
+    ("Clear all [obfdet] comments", _clear_all_tags, "Strip every [obfdet] comment from this IDB"),
     ("State Machine", find_state_machines, "Detect state machines / control-flow flattening"),
     ("Complex Function", find_complex_functions, "Rank functions by cyclomatic complexity"),
     ("Large Basic Block", find_large_basic_blocks, "Functions with unusually large basic blocks"),
@@ -110,7 +122,7 @@ def _open_chooser():
     if idx < 0:
         return
     label, fn, _ = _ACTIONS[idx]
-    if fn not in (show_results_view, _configure_findings_cap):
+    if fn not in (show_results_view, _configure_findings_cap, _clear_all_tags):
         invalidate_function_cache()
     try:
         fn()

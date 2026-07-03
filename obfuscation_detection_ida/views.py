@@ -261,6 +261,13 @@ class _ResultsForm(ida_kernwin.PluginForm):
             self._refresh_row(ea)
         self._table.setSortingEnabled(True)
 
+    def clear_all(self):
+        self._rows_by_ea = {}
+        if self._table is not None:
+            self._table.setSortingEnabled(False)
+            self._table.setRowCount(0)
+            self._table.setSortingEnabled(True)
+
     def begin_batch(self, tag_type):
         self.clear_heuristic(tag_type)
 

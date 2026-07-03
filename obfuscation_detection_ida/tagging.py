@@ -158,6 +158,42 @@ def clear_ea_annotation(ea, tag_type):
             pass
 
 
+def clear_all_obfdet_tags():
+    """Strip every [obfdet] line from every function comment, disasm comment,
+    and pseudocode comment in the IDB. Returns (functions_cleaned, eas_cleaned)."""
+    import idautils
+    funcs_cleaned = 0
+    eas_cleaned = 0
+    for ea in idautils.Functions():
+        existing = idc.get_func_cmt(ea, 1) or ""
+        if _TAG_MARKER in existing:
+            remaining = [l for l in existing.splitlines() if not l.startswith(_TAG_MARKER)]
+            idc.set_func_cmt(ea, "\n".join(remaining), 1)
+            funcs_cleaned += 1
+        func = ida_funcs.get_func(ea)
+        if func is None:
+            continue
+        for head in idautils.Heads(func.start_ea, func.end_ea):
+            cmt = idc.get_cmt(head, 0) or ""
+            if _TAG_MARKER not in cmt:
+                continue
+            remaining = [l for l in cmt.splitlines() if not l.startswith(_TAG_MARKER)]
+            idc.set_cmt(head, "\n".join(remaining), 0)
+            eas_cleaned += 1
+            if _HAS_HEXRAYS:
+                try:
+                    cfunc = ida_hexrays.decompile(func)
+                    if cfunc is not None:
+                        tl = ida_hexrays.treeloc_t()
+                        tl.ea = head
+                        tl.itp = ida_hexrays.ITP_SEMI
+                        cfunc.set_user_cmt(tl, "")
+                        cfunc.save_user_cmts()
+                except Exception:
+                    pass
+    return funcs_cleaned, eas_cleaned
+
+
 def clear_heuristic_tags(function_iter, tag_type):
     """Strip every function's comment of the given tag line.
 
