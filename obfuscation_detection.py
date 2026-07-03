@@ -132,6 +132,7 @@ class ObfuscationDetectionPlugin(ida_idaapi.plugin_t):
         return ida_idaapi.PLUGIN_KEEP
 
     def run(self, arg):
+        show_results_view()
         _open_chooser()
 
     def term(self):
