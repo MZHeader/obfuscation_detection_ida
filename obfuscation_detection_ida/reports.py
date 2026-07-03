@@ -110,8 +110,9 @@ MIN_CYCLOMATIC_COMPLEXITY = 50           # ordinary code rarely reaches 50+
 MIN_COMPLEX_FUNCTION_BLOCKS = 20
 MIN_AVG_BLOCK_INSTRUCTIONS = 40          # crypto / unrolled code territory
 MIN_LARGE_BLOCK_BLOCKS = 3               # single-block functions don't count
-MIN_UNCOMMON_SEQ_SCORE = 0.75            # 0.6-0.7 catches parsers/tokenizers;
-                                         # 0.75+ isolates crypto-shaped code
+MIN_UNCOMMON_SEQ_SCORE = 0.85            # 0.75 still catches hex parsers,
+                                         # whitespace tokenizers, string trim;
+                                         # 0.85+ isolates crypto/hash-shaped code
 MIN_CALLERS = 30                         # library-tier helpers, not "used twice"
 MOST_CALLED_REQUIRE_XOR_LOOP = True      # only tag popular helpers if they also
                                          # look like decoders; otherwise "many
@@ -408,6 +409,7 @@ def find_leaf_function_reports():
         for f in _functions()
         if len(callees_of(f)) == 0
         and _instruction_count(f) >= MIN_LEAF_INSTRUCTIONS
+        and not _has_any_data_ref(f)
     ]
 
 
