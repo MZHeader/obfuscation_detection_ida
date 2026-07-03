@@ -1,11 +1,19 @@
 """IDA has no first-class "tags"; we approximate by prefixing the function
-comment with a stable marker and by bookmarking the function start."""
+comment with a stable marker, and for findings that pinpoint a specific
+instruction we also annotate that line (both in the disassembly view and,
+if Hex-Rays is available, in the decompiled pseudocode)."""
 
 import ida_bytes
 import ida_funcs
 import ida_kernwin
 import ida_name
 import idc
+
+try:
+    import ida_hexrays
+    _HAS_HEXRAYS = ida_hexrays.init_hexrays_plugin()
+except Exception:
+    _HAS_HEXRAYS = False
 
 TAG_COMPLEX_ARITHMETIC_EXPRESSION = "Heuristic: Complex Arithmetic Expression"
 TAG_COMPLEX_FUNCTION = "Heuristic: Complex Function"
@@ -72,6 +80,81 @@ def tag_function(function, tag_type, data=""):
         idc.set_func_cmt(ea, existing.rstrip() + "\n" + line, 1)
     else:
         idc.set_func_cmt(ea, line, 1)
+
+
+def _set_pseudocode_comment(ea, text):
+    """Attach `text` to the decompiled statement containing `ea`.
+
+    Returns True if the pseudocode view now shows the comment; False if
+    Hex-Rays isn't available or the decompilation failed. The disassembly
+    comment set via `annotate_ea` covers users without Hex-Rays.
+    """
+    if not _HAS_HEXRAYS:
+        return False
+    try:
+        func = ida_funcs.get_func(ea)
+        if func is None:
+            return False
+        cfunc = ida_hexrays.decompile(func)
+        if cfunc is None:
+            return False
+        tl = ida_hexrays.treeloc_t()
+        tl.ea = ea
+        tl.itp = ida_hexrays.ITP_SEMI
+        cfunc.set_user_cmt(tl, text)
+        cfunc.save_user_cmts()
+        return True
+    except Exception:
+        return False
+
+
+def annotate_ea(ea, tag_type, data=""):
+    """Attach a heuristic marker to the disassembly (and pseudocode) line at `ea`.
+
+    Existing `[obfdet]` lines for the same tag_type are replaced instead of
+    stacked. Regular non-obfdet comments the user has already written are
+    preserved.
+    """
+    line = _prefix_line(tag_type, data)
+    existing = idc.get_cmt(ea, 0) or ""
+    if _TAG_MARKER in existing and tag_type in existing:
+        new_lines = [
+            l for l in existing.splitlines()
+            if not (l.startswith(_TAG_MARKER) and tag_type in l)
+        ]
+        new_lines.append(line)
+        idc.set_cmt(ea, "\n".join(new_lines), 0)
+    elif existing:
+        idc.set_cmt(ea, existing.rstrip() + "\n" + line, 0)
+    else:
+        idc.set_cmt(ea, line, 0)
+    _set_pseudocode_comment(ea, line)
+
+
+def clear_ea_annotation(ea, tag_type):
+    """Strip `[obfdet] <tag_type>` lines from the disasm + pseudocode comment at `ea`."""
+    existing = idc.get_cmt(ea, 0) or ""
+    if _TAG_MARKER in existing and tag_type in existing:
+        remaining = [
+            l for l in existing.splitlines()
+            if not (l.startswith(_TAG_MARKER) and tag_type in l)
+        ]
+        idc.set_cmt(ea, "\n".join(remaining), 0)
+    if _HAS_HEXRAYS:
+        try:
+            func = ida_funcs.get_func(ea)
+            if func is None:
+                return
+            cfunc = ida_hexrays.decompile(func)
+            if cfunc is None:
+                return
+            tl = ida_hexrays.treeloc_t()
+            tl.ea = ea
+            tl.itp = ida_hexrays.ITP_SEMI
+            cfunc.set_user_cmt(tl, "")
+            cfunc.save_user_cmts()
+        except Exception:
+            pass
 
 
 def clear_heuristic_tags(function_iter, tag_type):

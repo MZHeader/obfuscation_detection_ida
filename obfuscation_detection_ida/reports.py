@@ -22,6 +22,9 @@ from .helpers import (
     get_top_10_functions,
     iter_functions,
     iter_segments,
+    rc4_ksa_sites,
+    rc4_prga_sites,
+    xor_decryption_loop_sites,
 )
 from .loop_analysis import compute_irreducible_loops, compute_number_of_natural_loops
 from .ngrams import determine_ngram_database, ida_arch_name
@@ -82,6 +85,7 @@ def section_finding(section, entropy):
 
 
 def _functions():
+    # iter_functions() already caches — just materialize the generator.
     return list(iter_functions())
 
 
@@ -141,22 +145,24 @@ def find_duplicate_subgraph_reports():
 
 def find_instruction_overlapping_reports():
     reports_by_function = {}
+    by_start = {f.start: f for f in _functions()}
     for address in sorted(compute_overlapping_instruction_addresses()):
         for func_ea in functions_containing(address):
-            # find the FunctionGraph for that ea
-            for f in _functions():
-                if f.start == func_ea:
-                    report = reports_by_function.setdefault(
-                        f.start,
-                        function_finding(
-                            f,
-                            TAG_OVERLAPPING_INSTRUCTION,
-                            TAG_DESC_OVERLAPPING_INSTRUCTION,
-                            overlapping_instruction_addresses=[],
-                        ),
-                    )
-                    report["overlapping_instruction_addresses"].append(hex(address))
-                    break
+            f = by_start.get(func_ea)
+            if f is None:
+                continue
+            report = reports_by_function.setdefault(
+                f.start,
+                function_finding(
+                    f,
+                    TAG_OVERLAPPING_INSTRUCTION,
+                    TAG_DESC_OVERLAPPING_INSTRUCTION,
+                    overlapping_instruction_addresses=[],
+                    anchor_addresses=[],
+                ),
+            )
+            report["overlapping_instruction_addresses"].append(hex(address))
+            report["anchor_addresses"].append(address)
     return [reports_by_function[addr] for addr in sorted(reports_by_function)]
 
 
@@ -200,11 +206,20 @@ def find_most_called_function_reports():
 
 
 def find_xor_decryption_loop_reports():
-    return [
-        function_finding(f, TAG_XOR_DECRYPTION_LOOP, TAG_DESC_XOR_DECRYPTION_LOOP)
-        for f in _functions()
-        if contains_xor_decryption_loop(f)
-    ]
+    findings = []
+    for f in _functions():
+        sites = xor_decryption_loop_sites(f)
+        if not sites:
+            continue
+        findings.append(
+            function_finding(
+                f,
+                TAG_XOR_DECRYPTION_LOOP,
+                TAG_DESC_XOR_DECRYPTION_LOOP,
+                anchor_addresses=sites,
+            )
+        )
+    return findings
 
 
 def find_complex_arithmetic_expression_reports():
@@ -284,16 +299,24 @@ def find_section_entropy_reports():
 
 
 def find_rc4_ksa_reports():
-    return [
-        function_finding(f, TAG_RC4_KSA, TAG_DESC_RC4_KSA)
-        for f in _functions()
-        if find_rc4_ksa(f)
-    ]
+    findings = []
+    for f in _functions():
+        sites = rc4_ksa_sites(f)
+        if not sites:
+            continue
+        findings.append(
+            function_finding(f, TAG_RC4_KSA, TAG_DESC_RC4_KSA, anchor_addresses=sites)
+        )
+    return findings
 
 
 def find_rc4_prga_reports():
-    return [
-        function_finding(f, TAG_RC4_PRGA, TAG_DESC_RC4_PRGA)
-        for f in _functions()
-        if find_rc4_prga(f)
-    ]
+    findings = []
+    for f in _functions():
+        sites = rc4_prga_sites(f)
+        if not sites:
+            continue
+        findings.append(
+            function_finding(f, TAG_RC4_PRGA, TAG_DESC_RC4_PRGA, anchor_addresses=sites)
+        )
+    return findings

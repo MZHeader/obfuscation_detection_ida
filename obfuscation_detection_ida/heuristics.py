@@ -31,9 +31,11 @@ from .tagging import (
     TAG_STATE_MACHINE,
     TAG_UNCOMMON_INSTRUCTION_SEQUENCE,
     TAG_XOR_DECRYPTION_LOOP,
+    annotate_ea,
     clear_heuristic_tags,
     tag_function,
 )
+from .views import results_view
 
 _HIGHLIGHT_COLOUR = 0x00FFFF  # RGB yellow (BGR in set_color)
 
@@ -54,10 +56,20 @@ def _print_finding(finding, extra_key=None):
 
 def _apply(findings, tag_type, extra_key=None):
     clear_heuristic_tags(idautils.Functions(), tag_type)
+    view = results_view()
+    if view is not None:
+        view.begin_batch(tag_type)
     for finding in findings:
         _print_finding(finding, extra_key)
         start = int(finding["address"], 16)
         tag_function(start, tag_type, finding["description"])
+        # If the finding pinpoints specific instructions, annotate each one.
+        for anchor in finding.get("anchor_addresses", ()):
+            annotate_ea(anchor, tag_type, finding["description"])
+        if view is not None:
+            view.add_finding(finding, tag_type, extra_key)
+    if view is not None:
+        view.end_batch()
 
 
 def find_state_machines():

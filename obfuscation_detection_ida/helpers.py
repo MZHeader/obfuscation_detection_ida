@@ -32,20 +32,56 @@ from .ngrams import determine_ngram_database, ida_arch_name
 # ---------------------------------------------------------------------------
 
 
+_FUNCTION_GRAPH_CACHE = {}
+_FUNCTION_LIST_CACHE = None
+
+
+def invalidate_function_cache():
+    """Drop the cached FunctionGraph objects.
+
+    The chooser calls this once per user action so a fresh analysis reflects
+    any renames or newly-defined functions since the last click. Individual
+    heuristics reuse the cache within a single run.
+    """
+    global _FUNCTION_LIST_CACHE
+    _FUNCTION_GRAPH_CACHE.clear()
+    _FUNCTION_LIST_CACHE = None
+
+
+def _build_function_graph(ea):
+    func = ida_funcs.get_func(ea)
+    if func is None:
+        return None
+    try:
+        return FunctionGraph(func)
+    except Exception as ex:
+        print("[obfdet] Skipping 0x%x: %s" % (ea, ex))
+        return None
+
+
 def iter_functions():
-    """Yield FunctionGraph wrappers for every non-external function."""
+    """Yield FunctionGraph wrappers for every function.
+
+    Results are cached; subsequent calls in the same run reuse the same
+    FunctionGraph objects instead of rebuilding FlowChart + dominators.
+    """
+    global _FUNCTION_LIST_CACHE
+    if _FUNCTION_LIST_CACHE is not None:
+        for graph in _FUNCTION_LIST_CACHE:
+            yield graph
+        return
+
+    graphs = []
     for ea in idautils.Functions():
-        func = ida_funcs.get_func(ea)
-        if func is None:
-            continue
-        if func.flags & ida_funcs.FUNC_THUNK:
-            # Still include thunks; they're routinely obfuscation targets.
-            pass
-        try:
-            yield FunctionGraph(func)
-        except Exception as ex:
-            print("[obfdet] Skipping 0x%x: %s" % (ea, ex))
-            continue
+        graph = _FUNCTION_GRAPH_CACHE.get(ea)
+        if graph is None:
+            graph = _build_function_graph(ea)
+            if graph is None:
+                continue
+            _FUNCTION_GRAPH_CACHE[ea] = graph
+        graphs.append(graph)
+        yield graph
+    _FUNCTION_LIST_CACHE = graphs
 
 
 def callers_of(function):
@@ -196,11 +232,18 @@ def _computes_rc4_xor(ea):
 
 
 def contains_xor_decryption_loop(function, xor_check=_computes_xor_const):
+    return bool(xor_decryption_loop_sites(function, xor_check))
+
+
+def xor_decryption_loop_sites(function, xor_check=_computes_xor_const):
+    """Return the list of instruction addresses inside natural loops that
+    match `xor_check`. Empty list means "no XOR-loop detected"."""
+    sites = []
     for block in compute_blocks_in_natural_loops(function):
         for ea in block.instruction_addresses():
             if xor_check(ea):
-                return True
-    return False
+                sites.append(ea)
+    return sites
 
 
 # ---------------------------------------------------------------------------
@@ -221,17 +264,31 @@ def _iter_immediates(ea):
 
 
 def find_rc4_ksa(function):
+    return bool(rc4_ksa_sites(function))
+
+
+def rc4_ksa_sites(function):
+    """Return the addresses of instructions that carry the `0x100` immediate
+    inside a function with exactly two natural loops. Empty list means no
+    RC4 KSA candidate.
+    """
     if compute_number_of_natural_loops(function) != 2:
-        return False
+        return []
+    sites = []
     for ea in function.instruction_addresses():
         for c in _iter_immediates(ea):
             if c == 0x100:
-                return True
-    return False
+                sites.append(ea)
+                break
+    return sites
 
 
 def find_rc4_prga(function):
     return contains_xor_decryption_loop(function, xor_check=_computes_rc4_xor)
+
+
+def rc4_prga_sites(function):
+    return xor_decryption_loop_sites(function, xor_check=_computes_rc4_xor)
 
 
 # ---------------------------------------------------------------------------

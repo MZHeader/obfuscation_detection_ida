@@ -6,10 +6,10 @@ from .helpers import (
     calculate_entropy,
     callees_of,
     callers_of,
-    find_rc4_ksa,
-    find_rc4_prga,
     iter_functions,
     iter_segments,
+    rc4_ksa_sites,
+    rc4_prga_sites,
 )
 from .tagging import (
     TAG_ENTRY_FUNCTION,
@@ -22,6 +22,7 @@ from .tagging import (
     TAG_DESC_RC4_KSA,
     TAG_DESC_RC4_PRGA,
     TAG_DESC_RECURSIVE_FUNCTION,
+    annotate_ea,
     clear_heuristic_tags,
     tag_function,
 )
@@ -72,9 +73,15 @@ def find_rc4():
     clear_heuristic_tags(idautils.Functions(), TAG_RC4_KSA)
     clear_heuristic_tags(idautils.Functions(), TAG_RC4_PRGA)
     for f in iter_functions():
-        if find_rc4_ksa(f):
+        ksa = rc4_ksa_sites(f)
+        if ksa:
             print("Function %s (0x%x) might implement RC4 KSA." % (f.name, f.start))
             tag_function(f, TAG_RC4_KSA, TAG_DESC_RC4_KSA)
-        if find_rc4_prga(f):
+            for ea in ksa:
+                annotate_ea(ea, TAG_RC4_KSA, TAG_DESC_RC4_KSA)
+        prga = rc4_prga_sites(f)
+        if prga:
             print("Function %s (0x%x) might implement RC4 PRGA." % (f.name, f.start))
             tag_function(f, TAG_RC4_PRGA, TAG_DESC_RC4_PRGA)
+            for ea in prga:
+                annotate_ea(ea, TAG_RC4_PRGA, TAG_DESC_RC4_PRGA)
