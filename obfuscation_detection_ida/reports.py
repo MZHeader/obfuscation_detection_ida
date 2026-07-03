@@ -89,23 +89,36 @@ def _functions():
     return list(iter_functions())
 
 
+# Hard cap on how many findings any single heuristic can produce. Even after
+# the score gates below, a very large binary can leave dozens of "top decile"
+# hits per heuristic; we truncate to the highest-scoring N so the results
+# view stays reviewable.
+MAX_FINDINGS_PER_HEURISTIC = 15
+
 # Minimum absolute score a function needs to keep after the top-10% ranking.
 # Real obfuscation samples score much higher than "top decile of an ordinary
 # binary", so these gates are deliberately strict. Edit the constants in this
 # file to loosen them if you're studying a codebase where obfuscation is
 # subtle. Also see MIN_BLOCKS_* which require the function to be big enough
 # for the score to be meaningful in the first place.
-MIN_STATE_MACHINE_SCORE = 0.65           # dispatcher dominates >=65% of CFG
-MIN_STATE_MACHINE_BLOCKS = 15            # need a real CFG, not a 4-block stub
-MIN_CYCLOMATIC_COMPLEXITY = 30           # normal functions rarely hit 30+
-MIN_COMPLEX_FUNCTION_BLOCKS = 15
-MIN_AVG_BLOCK_INSTRUCTIONS = 30          # crypto / unrolled code territory
+MIN_STATE_MACHINE_SCORE = 0.75           # dispatcher dominates >=75% of CFG
+MIN_STATE_MACHINE_BLOCKS = 20            # need a real CFG, not a 4-block stub
+MIN_CYCLOMATIC_COMPLEXITY = 50           # ordinary code rarely reaches 50+
+MIN_COMPLEX_FUNCTION_BLOCKS = 20
+MIN_AVG_BLOCK_INSTRUCTIONS = 40          # crypto / unrolled code territory
 MIN_LARGE_BLOCK_BLOCKS = 3               # single-block functions don't count
-MIN_UNCOMMON_SEQ_SCORE = 0.50            # >=50% of 3-grams unseen in reference
-MIN_CALLERS = 20                         # library-tier helpers, not "used twice"
-MIN_LOOPS = 4                            # 1-3 loops is routine
+MIN_UNCOMMON_SEQ_SCORE = 0.60            # >=60% of 3-grams unseen in reference
+MIN_CALLERS = 30                         # library-tier helpers, not "used twice"
+MIN_LOOPS = 5                            # 1-4 loops is routine
 MIN_IRREDUCIBLE_LOOPS = 1                # already guarded; kept for symmetry
 MIN_DUPLICATE_SUBGRAPHS = 1              # already guarded
+
+
+def _cap(findings, key=None):
+    """Keep the top MAX_FINDINGS_PER_HEURISTIC results by `key` (descending)."""
+    if key is not None:
+        findings = sorted(findings, key=key, reverse=True)
+    return findings[:MAX_FINDINGS_PER_HEURISTIC]
 
 
 def _above(score, threshold):
@@ -123,7 +136,7 @@ def _has_blocks(function, minimum):
 
 
 def find_state_machine_reports():
-    return [
+    findings = [
         function_finding(
             f,
             TAG_STATE_MACHINE,
@@ -134,10 +147,11 @@ def find_state_machine_reports():
         if _above(score, MIN_STATE_MACHINE_SCORE)
         and _has_blocks(f, MIN_STATE_MACHINE_BLOCKS)
     ]
+    return _cap(findings)
 
 
 def find_complex_function_reports():
-    return [
+    findings = [
         function_finding(
             f,
             TAG_COMPLEX_FUNCTION,
@@ -148,10 +162,11 @@ def find_complex_function_reports():
         if _above(score, MIN_CYCLOMATIC_COMPLEXITY)
         and _has_blocks(f, MIN_COMPLEX_FUNCTION_BLOCKS)
     ]
+    return _cap(findings)
 
 
 def find_large_basic_block_reports():
-    return [
+    findings = [
         function_finding(
             f,
             TAG_LARGE_BASIC_BLOCK,
@@ -164,10 +179,11 @@ def find_large_basic_block_reports():
         if _above(score, MIN_AVG_BLOCK_INSTRUCTIONS)
         and _has_blocks(f, MIN_LARGE_BLOCK_BLOCKS)
     ]
+    return _cap(findings)
 
 
 def find_duplicate_subgraph_reports():
-    return [
+    findings = [
         function_finding(
             f,
             TAG_DUPLICATE_SUBGRAPH,
@@ -179,6 +195,7 @@ def find_duplicate_subgraph_reports():
         )
         if score != 0
     ]
+    return _cap(findings)
 
 
 def find_instruction_overlapping_reports():
@@ -215,7 +232,7 @@ def find_uncommon_instruction_sequence_reports():
             "architecture '%s'; skipping." % ida_arch_name()
         )
         return []
-    return [
+    findings = [
         function_finding(
             f,
             TAG_UNCOMMON_INSTRUCTION_SEQUENCE,
@@ -228,10 +245,11 @@ def find_uncommon_instruction_sequence_reports():
         )
         if _above(score, MIN_UNCOMMON_SEQ_SCORE)
     ]
+    return _cap(findings)
 
 
 def find_most_called_function_reports():
-    return [
+    findings = [
         function_finding(
             f,
             TAG_MOST_CALLED_FUNCTION,
@@ -243,6 +261,7 @@ def find_most_called_function_reports():
         )
         if _above(score, MIN_CALLERS)
     ]
+    return _cap(findings)
 
 
 def find_xor_decryption_loop_reports():
@@ -263,7 +282,7 @@ def find_xor_decryption_loop_reports():
 
 
 def find_complex_arithmetic_expression_reports():
-    return [
+    findings = [
         function_finding(
             f,
             TAG_COMPLEX_ARITHMETIC_EXPRESSION,
@@ -275,10 +294,11 @@ def find_complex_arithmetic_expression_reports():
         )
         if score != 0
     ]
+    return _cap(findings)
 
 
 def find_loop_frequency_reports():
-    return [
+    findings = [
         function_finding(
             f,
             TAG_LOOP_FREQUENCY,
@@ -290,10 +310,11 @@ def find_loop_frequency_reports():
         )
         if _above(score, MIN_LOOPS)
     ]
+    return _cap(findings)
 
 
 def find_irreducible_loop_reports():
-    return [
+    findings = [
         function_finding(
             f,
             TAG_IRREDUCIBLE_LOOP,
@@ -307,6 +328,7 @@ def find_irreducible_loop_reports():
             ),
         )
     ]
+    return _cap(findings)
 
 
 def find_entry_function_reports():

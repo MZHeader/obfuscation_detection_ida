@@ -132,15 +132,29 @@ def callees_of(function):
 # ---------------------------------------------------------------------------
 
 
+_MIN_DISPATCHER_SUCCESSORS = 3
+
+
 def calc_state_machine_score(function):
+    """Score a function's resemblance to a dispatcher-driven state machine.
+
+    A plain `while` loop trivially matches "some block dominates most of the
+    function and has a back-edge", so we additionally require the candidate
+    dominator to have at least `_MIN_DISPATCHER_SUCCESSORS` outgoing edges.
+    Real control-flow flattening dispatchers fan out to many state blocks;
+    ordinary loops only branch two ways (body + exit).
+    """
+    total = len(function.basic_blocks)
+    if total == 0:
+        return 0.0
     score = 0.0
     for block in function.basic_blocks:
+        if len(block.successors) < _MIN_DISPATCHER_SUCCESSORS:
+            continue
         dominated = function.dominated_by(block)
         if not any(edge.source in dominated for edge in block.incoming_edges):
             continue
-        if len(function.basic_blocks) == 0:
-            continue
-        score = max(score, len(dominated) / len(function.basic_blocks))
+        score = max(score, len(dominated) / total)
     return score
 
 
@@ -322,10 +336,14 @@ def calc_global_ngrams(functions, n):
     return global_grams
 
 
+_MIN_NGRAM_TOTAL = 30  # a function needs enough instructions before its
+                       # ngram score is statistically meaningful
+
+
 def calc_uncommon_instruction_sequences_score(function, ngram_database):
     function_ngrams = calc_ngrams(function, 3)
     total = sum(function_ngrams.values())
-    if total < 5:
+    if total < _MIN_NGRAM_TOTAL:
         return 0.0
     count = sum(v for gram, v in function_ngrams.items() if gram not in ngram_database)
     return count / total
@@ -391,11 +409,17 @@ def _init_mba_opsets():
     return True
 
 
+_MBA_MIN_BLOCKS = 3  # skip trivial functions to avoid decompiling everything
+
+
 def calculate_complex_arithmetic_expressions(function):
     """Count microcode instructions that mix arithmetic and boolean ops.
 
-    Requires Hex-Rays. Returns 0 if decompiler is unavailable.
+    Requires Hex-Rays. Returns 0 if decompiler is unavailable or the function
+    is too small to plausibly host MBA.
     """
+    if len(function.basic_blocks) < _MBA_MIN_BLOCKS:
+        return 0
     if not _init_mba_opsets():
         return 0
     try:
