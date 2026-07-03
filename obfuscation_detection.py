@@ -87,16 +87,45 @@ class _Handler(ida_kernwin.action_handler_t):
         return ida_kernwin.AST_ENABLE_ALWAYS
 
 
+_MENU_ROOT_ID = "obfdet:root"
+_MENU_ROOT_LABEL = "Obfuscation Detection"
+_MENU_PATH_BASE = "Edit/Plugins/Obfuscation Detection/"
+
+
+def _ensure_submenu():
+    """Create the Edit > Plugins > Obfuscation Detection submenu container.
+
+    Returns True on success. `create_menu` is a no-op if the menu already
+    exists on subsequent calls, but not every IDA build ships it; we degrade
+    gracefully so the actions themselves are still registered (and reachable
+    via the command palette).
+    """
+    create_menu = getattr(ida_kernwin, "create_menu", None)
+    if create_menu is None:
+        print("[obfdet] ida_kernwin.create_menu unavailable; "
+              "submenu will not be created (actions still reachable via Ctrl-Shift-M).")
+        return False
+    try:
+        create_menu(_MENU_ROOT_ID, _MENU_ROOT_LABEL, "Edit/Plugins/")
+        return True
+    except Exception as ex:
+        print("[obfdet] create_menu failed: %s" % ex)
+        return False
+
+
 def _register_actions():
+    has_submenu = _ensure_submenu()
     for aid, label, fn, tip in _ACTIONS:
         desc = ida_kernwin.action_desc_t(aid, label, _Handler(fn), None, tip, -1)
         ida_kernwin.unregister_action(aid)  # idempotent
         ida_kernwin.register_action(desc)
-        ida_kernwin.attach_action_to_menu(
-            "Edit/Plugins/Obfuscation Detection/" + label,
-            aid,
-            ida_kernwin.SETMENU_APP,
-        )
+        if has_submenu:
+            path = _MENU_PATH_BASE + label
+        else:
+            # Fall back to flat entries in Edit/Plugins so users can still find them.
+            path = "Edit/Plugins/Obfuscation Detection - " + label
+        if not ida_kernwin.attach_action_to_menu(path, aid, ida_kernwin.SETMENU_APP):
+            print("[obfdet] failed to attach %r to %r" % (aid, path))
 
 
 def _unregister_actions():
