@@ -41,7 +41,7 @@ from obfuscation_detection_ida import (
 
 PLUGIN_NAME = "Obfuscation Detection"
 PLUGIN_HOTKEY = ""
-PLUGIN_VERSION = "1.1"
+PLUGIN_VERSION = "1.0"
 
 
 # (label, callable, tooltip)
