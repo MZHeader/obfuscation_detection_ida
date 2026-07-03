@@ -89,6 +89,28 @@ def _functions():
     return list(iter_functions())
 
 
+# Minimum absolute score a function needs to keep after the top-10% ranking.
+# The Binary Ninja original only uses the percentile cut, but on medium/large
+# binaries that floods the results view with mundane functions that only look
+# suspicious relative to a small population. These thresholds prune the
+# obvious non-hits while preserving anything genuinely interesting.
+MIN_STATE_MACHINE_SCORE = 0.30           # >=30% of blocks under one dominator
+MIN_CYCLOMATIC_COMPLEXITY = 15           # ~15+ branches
+MIN_AVG_BLOCK_INSTRUCTIONS = 20          # tight, unrolled, or crypto-shaped
+MIN_UNCOMMON_SEQ_SCORE = 0.30            # 30% of 3-grams unseen in reference
+MIN_CALLERS = 5                          # helpers with real reuse
+MIN_LOOPS = 2                            # single-loop functions are boring
+MIN_IRREDUCIBLE_LOOPS = 1                # already guarded; kept for symmetry
+MIN_DUPLICATE_SUBGRAPHS = 1              # already guarded
+
+
+def _above(score, threshold):
+    try:
+        return float(score) >= threshold
+    except (TypeError, ValueError):
+        return False
+
+
 def find_state_machine_reports():
     return [
         function_finding(
@@ -98,7 +120,7 @@ def find_state_machine_reports():
             state_machine_score=score,
         )
         for f, score in get_top_10_functions(_functions(), calc_state_machine_score)
-        if score != 0.0
+        if _above(score, MIN_STATE_MACHINE_SCORE)
     ]
 
 
@@ -111,6 +133,7 @@ def find_complex_function_reports():
             cyclomatic_complexity=score,
         )
         for f, score in get_top_10_functions(_functions(), calc_cyclomatic_complexity)
+        if _above(score, MIN_CYCLOMATIC_COMPLEXITY)
     ]
 
 
@@ -125,6 +148,7 @@ def find_large_basic_block_reports():
         for f, score in get_top_10_functions(
             _functions(), calc_average_instructions_per_block
         )
+        if _above(score, MIN_AVG_BLOCK_INSTRUCTIONS)
     ]
 
 
@@ -188,6 +212,7 @@ def find_uncommon_instruction_sequence_reports():
             _functions(),
             lambda f: calc_uncommon_instruction_sequences_score(f, db),
         )
+        if _above(score, MIN_UNCOMMON_SEQ_SCORE)
     ]
 
 
@@ -202,6 +227,7 @@ def find_most_called_function_reports():
         for f, score in get_top_10_functions(
             _functions(), lambda f: len(callers_of(f))
         )
+        if _above(score, MIN_CALLERS)
     ]
 
 
@@ -248,6 +274,7 @@ def find_loop_frequency_reports():
         for f, score in get_top_10_functions(
             _functions(), compute_number_of_natural_loops
         )
+        if _above(score, MIN_LOOPS)
     ]
 
 
