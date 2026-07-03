@@ -349,6 +349,11 @@ def _xor_instruction_info(ea):
 # a genuine byte-mask decoder uses 0x80, 0xAA, 0x5A, etc. — never 1..3.
 _TRIVIAL_XOR_CONSTS = {
     0, 1, 2, 3, -1,
+    # Single-bit / small-power-of-two flag toggles (`flags ^= FLAG_X`)
+    4, 8, 0x10, 0x20, 0x40, 0x80,
+    # Common nibble/byte inversion patterns
+    0x0F, 0xF0,
+    # Full-width word/dword/qword masks (bitwise-NOT idioms)
     0xFFFF, 0xFFFFFFFF, 0xFFFFFFFFFFFFFFFF,
 }
 
@@ -485,12 +490,55 @@ def rc4_ksa_sites(function):
     return sites
 
 
+def _loop_has_byte_indexed_load(function):
+    """True if any instruction inside a natural loop reads a byte from a
+    base+index address (SIB byte present, dtype == 1).
+
+    This is the signature of an RC4-style S-box lookup: `movzx r, byte ptr
+    [rdi+rax]` / `mov al, byte ptr [rdi+rcx]`. It cleanly separates real
+    RC4 PRGA from other byte-XOR loops we consistently mis-tag as RC4:
+        * AES MixColumns — all reg-reg XORs, no byte-indexed loads
+        * CRYPTO_memcmp  — byte XOR with `[reg]`, no index register
+        * xor128_encrypt — byte XOR with `[reg]`, single-base addressing
+        * HMAC ipad/opad — byte XOR with immediate constants
+    """
+    for block in compute_blocks_in_natural_loops(function):
+        for ea in block.instruction_addresses():
+            insn = ida_ua.insn_t()
+            if not ida_ua.decode_insn(insn, ea):
+                continue
+            for i in range(_UA_MAXOP):
+                op = insn.ops[i]
+                if op.type == ida_ua.o_void:
+                    break
+                if op.type not in (ida_ua.o_phrase, ida_ua.o_displ):
+                    continue
+                if _dtype_size(op.dtype) != 1:
+                    continue
+                if getattr(op, "specflag1", 0):  # SIB byte → base+index
+                    return True
+    return False
+
+
 def find_rc4_prga(function):
-    return contains_xor_decryption_loop(function, xor_check=_computes_rc4_xor)
+    return bool(rc4_prga_sites(function))
 
 
 def rc4_prga_sites(function):
-    return xor_decryption_loop_sites(function, xor_check=_computes_rc4_xor)
+    """RC4 PRGA candidate sites.
+
+    Requires both a byte-XOR of two distinct non-immediate operands inside
+    a natural loop AND a byte-sized base+index load somewhere in the loop
+    body (the S-box lookup). Without the load constraint this heuristic
+    over-matches every byte-XOR construct — see _loop_has_byte_indexed_load
+    docstring for the specific FP families it eliminates.
+    """
+    sites = xor_decryption_loop_sites(function, xor_check=_computes_rc4_xor)
+    if not sites:
+        return []
+    if not _loop_has_byte_indexed_load(function):
+        return []
+    return sites
 
 
 # ---------------------------------------------------------------------------

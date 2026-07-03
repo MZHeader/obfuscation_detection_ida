@@ -26,6 +26,7 @@ from .helpers import (
     rc4_ksa_sites,
     rc4_prga_sites,
     xor_decryption_loop_sites,
+    _xor_instruction_info,
 )
 from .loop_analysis import compute_irreducible_loops, compute_number_of_natural_loops
 from .ngrams import determine_ngram_database, ida_arch_name
@@ -127,6 +128,12 @@ MIN_DUPLICATE_SUBGRAPHS = 4              # 2-3 duplicates is call-site clusterin
                                          # not obfuscation
 MIN_MBA_INSTRUCTIONS = 5                 # a single mixed op is any normal xor/shift
 MIN_LEAF_INSTRUCTIONS = 20               # tiny leaves are helpers, not outlined code
+MIN_LEAF_CALLERS = 2                     # a leaf with a single caller is just an
+                                         # un-inlined helper the compiler happened
+                                         # to keep out-of-line. Real "outlined
+                                         # stubs / trampolines" are shared across
+                                         # multiple call sites — that's what makes
+                                         # them worth outlining.
 MAX_LEAF_CALLERS = 5                     # a leaf called 10+ times is a plain utility
                                          # (memcpy-like helper), not an outlined stub
                                          # or trampoline
@@ -296,20 +303,54 @@ def find_most_called_function_reports():
 
 
 def find_xor_decryption_loop_reports():
-    findings = []
+    # First pass: collect (site, xor-constant) pairs across every function
+    # so we can filter out constants that appear in many functions.
+    #
+    # Real string / code decryption almost always uses a per-function key.
+    # Hash polynomials (FNV, CRC32, jenkins) get INLINED into dozens of
+    # callers, producing the same constant over and over. Dropping the
+    # cross-function-shared constants kills the biggest FP class on large
+    # C++ binaries without hurting real decryption stubs or SHA/HMAC
+    # constants (which appear once or twice at most).
+    per_func_sites = []  # list of (f, [(site_ea, const_value_or_None), ...])
+    const_freq = {}
     for f in _functions():
         sites = xor_decryption_loop_sites(f)
         if not sites:
+            continue
+        annotated = []
+        seen_consts_here = set()
+        for s in sites:
+            info = _xor_instruction_info(s)
+            cv = info["const_value"] if (info and info["has_const"]) else None
+            annotated.append((s, cv))
+            if cv is not None and cv not in seen_consts_here:
+                const_freq[cv] = const_freq.get(cv, 0) + 1
+                seen_consts_here.add(cv)
+        per_func_sites.append((f, annotated))
+
+    # A constant appearing in 3+ distinct functions is almost certainly a
+    # shared polynomial / hash-init value, not a per-function decryption
+    # key. Real SHA/HMAC constants appear at most once or twice.
+    SHARED_CONST_THRESHOLD = 3
+    shared_consts = {
+        c for c, n in const_freq.items() if n >= SHARED_CONST_THRESHOLD
+    }
+
+    findings = []
+    for f, annotated in per_func_sites:
+        kept_sites = [s for s, cv in annotated if cv not in shared_consts]
+        if not kept_sites:
             continue
         findings.append(
             function_finding(
                 f,
                 TAG_XOR_DECRYPTION_LOOP,
                 TAG_DESC_XOR_DECRYPTION_LOOP,
-                anchor_addresses=sites,
+                anchor_addresses=kept_sites,
             )
         )
-    return findings
+    return _cap(findings)
 
 
 def find_complex_arithmetic_expression_reports():
@@ -346,7 +387,14 @@ def find_loop_frequency_reports():
 
 def find_fragmented_function_reports():
     """Functions with an abnormally high basic-block-count vs. cyclomatic
-    complexity ratio — the signature of block-splitting obfuscation."""
+    complexity ratio — the signature of block-splitting obfuscation.
+
+    Also requires at least one natural loop. Real block-splitting obfuscation
+    is applied to loop bodies (VM dispatchers, decrypt loops); loop-free
+    high-fragmentation functions are almost always compiler-emitted
+    jump-table switches (X509/error-code lookups, curl_easy_strerror, etc.)
+    which give the same blocks/cc ratio but are legitimate code.
+    """
     findings = [
         function_finding(
             f,
@@ -358,6 +406,7 @@ def find_fragmented_function_reports():
         for f, score in get_top_10_functions(_functions(), calc_fragmentation_ratio)
         if _above(score, MIN_FRAGMENTATION_RATIO)
         and _has_blocks(f, MIN_FRAGMENTATION_BLOCKS)
+        and compute_number_of_natural_loops(f) >= 1
     ]
     return _cap(findings)
 
@@ -411,21 +460,43 @@ def find_entry_function_reports():
 
 
 def find_leaf_function_reports():
+    scored = []
+    for f in _functions():
+        if len(callees_of(f)) != 0:
+            continue
+        insns = _instruction_count(f)
+        if insns < MIN_LEAF_INSTRUCTIONS:
+            continue
+        callers = len(callers_of(f))
+        if callers < MIN_LEAF_CALLERS or callers > MAX_LEAF_CALLERS:
+            continue
+        if _has_any_data_ref(f):
+            continue
+        scored.append((insns, f))
+    # Cap to the top MAX_FINDINGS_PER_HEURISTIC by instruction count. A
+    # 200-instruction leaf is more likely a real outlined helper than one
+    # of a thousand 20-insn getters in a large C++ codebase.
+    scored.sort(key=lambda x: -x[0])
     return [
         function_finding(f, TAG_LEAF_FUNCTION, TAG_DESC_LEAF_FUNCTION)
-        for f in _functions()
-        if len(callees_of(f)) == 0
-        and _instruction_count(f) >= MIN_LEAF_INSTRUCTIONS
-        and len(callers_of(f)) <= MAX_LEAF_CALLERS
-        and not _has_any_data_ref(f)
+        for _, f in scored[:MAX_FINDINGS_PER_HEURISTIC]
     ]
 
 
 def find_recursive_function_reports():
+    # Rank by instruction count so we surface the *interesting* recursives
+    # on huge C++ codebases (game engines, LLVM). Every template-traversal
+    # helper is technically self-recursive; without a cap the report is
+    # unreadable on binaries with hundreds of thousands of functions.
+    scored = []
+    for f in _functions():
+        if f.start not in callees_of(f):
+            continue
+        scored.append((_instruction_count(f), f))
+    scored.sort(key=lambda x: -x[0])
     return [
         function_finding(f, TAG_RECURSIVE_FUNCTION, TAG_DESC_RECURSIVE_FUNCTION)
-        for f in _functions()
-        if f.start in callees_of(f)
+        for _, f in scored[:MAX_FINDINGS_PER_HEURISTIC]
     ]
 
 
@@ -436,24 +507,32 @@ def find_section_entropy_reports():
 
 
 def find_rc4_ksa_reports():
-    findings = []
+    scored = []
     for f in _functions():
         sites = rc4_ksa_sites(f)
         if not sites:
             continue
-        findings.append(
-            function_finding(f, TAG_RC4_KSA, TAG_DESC_RC4_KSA, anchor_addresses=sites)
-        )
-    return findings
+        scored.append((len(sites), f, sites))
+    scored.sort(key=lambda x: -x[0])
+    return [
+        function_finding(f, TAG_RC4_KSA, TAG_DESC_RC4_KSA, anchor_addresses=sites)
+        for _, f, sites in scored[:MAX_FINDINGS_PER_HEURISTIC]
+    ]
 
 
 def find_rc4_prga_reports():
-    findings = []
+    scored = []
     for f in _functions():
         sites = rc4_prga_sites(f)
         if not sites:
             continue
-        findings.append(
-            function_finding(f, TAG_RC4_PRGA, TAG_DESC_RC4_PRGA, anchor_addresses=sites)
-        )
-    return findings
+        scored.append((len(sites), f, sites))
+    # Rank by anchor-site count; functions with more byte-XOR sites are the
+    # more RC4-shaped candidates. On large clean binaries this caps a
+    # heuristic that would otherwise fire on every byte-XOR crypto primitive
+    # (AES round helpers, XOR128, HMAC, memcmp-style constant-time ops).
+    scored.sort(key=lambda x: -x[0])
+    return [
+        function_finding(f, TAG_RC4_PRGA, TAG_DESC_RC4_PRGA, anchor_addresses=sites)
+        for _, f, sites in scored[:MAX_FINDINGS_PER_HEURISTIC]
+    ]
