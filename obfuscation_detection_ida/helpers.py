@@ -268,12 +268,19 @@ def calc_fragmentation_ratio(function):
     blocks / cc 18 = 55. That means most "blocks" carry no branching
     information — they exist purely to shatter the linear flow.
 
-    Returns 0 for tiny functions to avoid scoring noise.
+    Returns 0 for tiny functions and for functions whose IDA flowchart
+    has more nodes than edges (`cc` computes to <=0). The latter can
+    happen when many blocks are dead-ends (ret / int3 / noreturn calls)
+    that IDA didn't attach outgoing edges to — the ratio is meaningless
+    in that case, and functions like these are what falsely tripped the
+    heuristic on tiny gcc utility routines with negative cc.
     """
     num_blocks = len(function.basic_blocks)
     if num_blocks < 3:
         return 0.0
-    cc = max(1, calc_cyclomatic_complexity(function))
+    cc = calc_cyclomatic_complexity(function)
+    if cc <= 0:
+        return 0.0
     return num_blocks / cc
 
 
@@ -443,23 +450,29 @@ def _has_byte_indexed_store(function):
 
     Only operand 0 (destination on x86 MOV) is checked, so we don't
     misclassify byte LOADs like `movzx eax, byte ptr [rcx+rax]`.
+
+    The store must be inside a natural loop — RC4 KSA's S-box init lives
+    in the KSA loop. A byte store elsewhere in the function (e.g. an
+    unrelated `memcpy`-style byte fill in a hashtable initializer) does
+    not qualify.
     """
-    for ea in function.instruction_addresses():
-        insn = ida_ua.insn_t()
-        if not ida_ua.decode_insn(insn, ea):
-            continue
-        mnem = insn.get_canon_mnem().lower()
-        if mnem == "stosb":
-            return True  # unconditional byte-store to [rdi]
-        if mnem not in _STORE_MNEMS:
-            continue
-        op = insn.ops[0]  # destination
-        if op.type not in (ida_ua.o_phrase, ida_ua.o_displ):
-            continue
-        if _dtype_size(op.dtype) != 1:
-            continue
-        if getattr(op, "specflag1", 0):  # SIB byte present → indexed
-            return True
+    for block in compute_blocks_in_natural_loops(function):
+        for ea in block.instruction_addresses():
+            insn = ida_ua.insn_t()
+            if not ida_ua.decode_insn(insn, ea):
+                continue
+            mnem = insn.get_canon_mnem().lower()
+            if mnem == "stosb":
+                return True  # unconditional byte-store to [rdi]
+            if mnem not in _STORE_MNEMS:
+                continue
+            op = insn.ops[0]  # destination
+            if op.type not in (ida_ua.o_phrase, ida_ua.o_displ):
+                continue
+            if _dtype_size(op.dtype) != 1:
+                continue
+            if getattr(op, "specflag1", 0):  # SIB byte present → indexed
+                return True
     return False
 
 

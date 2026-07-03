@@ -450,12 +450,25 @@ def _has_any_data_ref(function):
 
 
 def find_entry_function_reports():
+    # On large clean C++ binaries IDA's caller analysis leaves hundreds of
+    # legitimate static/private functions orphaned; rank by instruction
+    # count and cap so a "real shellcode / dead-code fragment" (typically
+    # the biggest orphan) surfaces first instead of being buried under 150
+    # tiny helpers.
+    scored = []
+    for f in _functions():
+        if len(callers_of(f)) != 0:
+            continue
+        insns = _instruction_count(f)
+        if insns < MIN_ENTRY_INSTRUCTIONS:
+            continue
+        if _has_any_data_ref(f):
+            continue
+        scored.append((insns, f))
+    scored.sort(key=lambda x: -x[0])
     return [
         function_finding(f, TAG_ENTRY_FUNCTION, TAG_DESC_ENTRY_FUNCTION)
-        for f in _functions()
-        if len(callers_of(f)) == 0
-        and _instruction_count(f) >= MIN_ENTRY_INSTRUCTIONS
-        and not _has_any_data_ref(f)
+        for _, f in scored[:MAX_FINDINGS_PER_HEURISTIC]
     ]
 
 
