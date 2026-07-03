@@ -38,14 +38,7 @@ Utilities:
 Drop the loader (`obfuscation_detection.py`) and its package
 (`obfuscation_detection_ida/`) into your IDA user plugins directory.
 
-### Linux
-
-```
-~/.idapro/plugins/obfuscation_detection.py
-~/.idapro/plugins/obfuscation_detection_ida/
-```
-
-### macOS
+### Linux / macOS
 
 ```
 ~/.idapro/plugins/obfuscation_detection.py
