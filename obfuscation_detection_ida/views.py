@@ -118,7 +118,6 @@ class _ResultsForm(ida_kernwin.PluginForm):
         self._table.setSelectionBehavior(_QtWidgets.QAbstractItemView.SelectRows)
         self._table.setEditTriggers(_QtWidgets.QAbstractItemView.NoEditTriggers)
         self._table.setSortingEnabled(True)
-        self._table.sortByColumn(0, _QtCore.Qt.DescendingOrder)
         header = self._table.horizontalHeader()
         header.setStretchLastSection(True)
         header.setSectionResizeMode(_QtWidgets.QHeaderView.Interactive)
@@ -149,9 +148,12 @@ class _ResultsForm(ida_kernwin.PluginForm):
     def _repopulate(self):
         if self._table is None:
             return
+        self._table.setSortingEnabled(False)
         self._table.setRowCount(0)
         for row in self._rows:
             self._append_row(row)
+        self._table.setSortingEnabled(True)
+        self._table.sortByColumn(0, _QtCore.Qt.DescendingOrder)
 
     def _append_row(self, row):
         r = self._table.rowCount()
